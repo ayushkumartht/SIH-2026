@@ -1,3 +1,5 @@
+# 404
+
 # 🌍 Nabha Rural Healthcare & Telemedicine Platform  
 
 A **telemedicine and hospital management system** designed to address the severe healthcare challenges faced by Nabha and surrounding rural villages.  
