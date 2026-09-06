@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Teleconsultation Test Console</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+    <script src="https://unpkg.com/@daily-co/daily-js"></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Backend integration console</p>
+          <h1>Teleconsultation test room</h1>
+          <p class="lede">Exercise Daily.co, raw WebRTC, quality transitions, vitals, and call ending from one screen.</p>
+        </div>
+        <div id="connectionBadge" class="badge idle">Disconnected</div>
+      </header>
+
+      <section class="grid setup-grid">
+        <form id="setupForm" class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">01 / Room setup</p>
+              <h2>Start a consultation</h2>
+            </div>
+          </div>
+          <label>Backend URL<input id="backendUrl" value="http://localhost:3000" required /></label>
+          <label>JWT token (required outside demo mode)<input id="authToken" type="password" placeholder="Paste login token for protected API calls" /></label>
+          <label class="consent-row"><input id="consentAccepted" type="checkbox" /> I consent to this video consultation and clinical notes.</label>
+          <div class="two-col">
+            <label>Doctor ID<input id="doctorId" placeholder="doctor id" required /></label>
+            <label>Patient ID<input id="patientId" placeholder="patient id" required /></label>
+          </div>
+          <div class="two-col">
+            <label>Open dashboard as<select id="participantRole"><option value="patient">Patient</option><option value="asha">ASHA worker</option><option value="doctor">Doctor dashboard</option></select></label>
+            <label>Existing room ID<input id="existingRoomId" placeholder="join an existing room" /></label>
+          </div>
+          <label>Call mode<select id="callMode"><option value="webrtc">Raw WebRTC</option><option value="daily">Daily.co</option></select></label>
+          <div class="two-col">
+            <label>RTT (ms)<input id="rttMs" type="number" min="0" value="80" required /></label>
+            <label>Packet loss (%)<input id="packetLossPercent" type="number" min="0" max="100" step="0.1" value="1" required /></label>
+          </div>
+          <div class="actions">
+            <button type="submit" class="primary">Create room</button>
+            <button type="button" id="joinButton" class="secondary">Join room</button>
+            <button type="button" id="openDoctorButton" class="secondary hidden">Open doctor dashboard</button>
+            <button type="button" id="leaveButton" class="danger" disabled>End call</button>
+          </div>
+          <p id="setupMessage" class="message">Waiting for a room.</p>
+        </form>
+
+        <section class="panel status-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">02 / Live state</p>
+              <h2 id="modeTitle">No active call</h2>
+            </div>
+            <span id="tierBadge" class="tier unknown">UNKNOWN</span>
+          </div>
+          <div class="metrics">
+            <div><span>RTT</span><strong id="liveRtt">--</strong></div>
+            <div><span>Packet loss</span><strong id="liveLoss">--</strong></div>
+            <div><span>Room</span><strong id="roomIdLabel">--</strong></div>
+          </div>
+          <p id="modeDescription" class="mode-description">Create a room to begin.</p>
+          <div id="fallbackNotice" class="fallback hidden">Very poor connection. Use the existing SMS/IVR symptom flow while the call is offline.</div>
+        </section>
+      </section>
+
+      <section id="ashaDashboard" class="panel asha-dashboard hidden">
+        <div class="panel-heading">
+          <div><p class="eyebrow">ASHA workspace</p><h2>Field consultation desk</h2></div>
+          <span id="syncBadge" class="badge live">0 pending</span>
+        </div>
+        <div class="asha-grid">
+          <form id="patientForm" class="subpanel">
+            <h3>Register patient</h3>
+            <label>Patient name<input id="ashaPatientName" required placeholder="Patient name" /></label>
+            <div class="two-col">
+              <label>Age<input id="ashaPatientAge" type="number" min="0" /></label>
+              <label>Gender<select id="ashaPatientGender"><option value="female">Female</option><option value="male">Male</option><option value="other">Other</option></select></label>
+            </div>
+            <label>Contact<input id="ashaPatientContact" placeholder="Phone number" /></label>
+            <label>Symptoms<textarea id="ashaPatientSymptoms" rows="3" placeholder="What is the patient experiencing?"></textarea></label>
+            <button type="submit" class="primary">Save patient locally</button>
+            <p id="patientMessage" class="message"></p>
+          </form>
+          <section class="subpanel">
+            <div class="section-row"><h3>Today's patients</h3><button id="syncButton" class="secondary" type="button">Sync pending</button></div>
+            <input id="patientSearch" placeholder="Search by patient name or contact" />
+            <div id="patientList" class="patient-list"></div>
+          </section>
+          <form id="ashaVitalsForm" class="subpanel hidden">
+            <h3>Patient vitals</h3>
+            <p id="selectedPatientLabel" class="hint">Select a patient first.</p>
+            <div class="two-col">
+              <label>Temperature C<input id="ashaTemperature" type="number" step="0.1" /></label>
+              <label>Heart rate<input id="ashaHeartRate" type="number" /></label>
+              <label>SpO2<input id="ashaOxygen" type="number" /></label>
+              <label>Respiratory rate<input id="ashaRespiratory" type="number" /></label>
+              <label>Systolic BP<input id="ashaSystolic" type="number" /></label>
+              <label>Diastolic BP<input id="ashaDiastolic" type="number" /></label>
+            </div>
+            <button type="submit" class="secondary">Save vitals</button>
+          </form>
+        </div>
+      </section>
+
+      <section class="grid call-grid">
+        <section class="panel media-panel">
+          <div class="panel-heading"><div><p class="eyebrow">03 / Media</p><h2>Consultation feed</h2></div></div>
+          <div id="dailyContainer" class="daily-container hidden"></div>
+          <div id="webrtcContainer" class="video-stage">
+            <video id="remoteVideo" autoplay playsinline></video>
+            <video id="localVideo" autoplay muted playsinline></video>
+            <div id="audioOnlyLabel" class="audio-only hidden">Audio-only mode</div>
+          </div>
+          <p id="mediaMessage" class="message">No media session yet.</p>
+        </section>
+
+        <section class="panel controls-panel">
+          <div class="panel-heading"><div><p class="eyebrow">04 / Controls</p><h2>Test transitions</h2></div></div>
+          <p class="hint">The browser sends metrics to the backend. The backend decides the tier; this client only applies it.</p>
+          <button id="sendQualityButton" class="secondary" disabled>Send current quality</button>
+          <div class="quality-shortcuts">
+            <button data-rtt="80" data-loss="1">HD</button>
+            <button data-rtt="220" data-loss="3">Low-res</button>
+            <button data-rtt="420" data-loss="7">Audio-only</button>
+            <button data-rtt="900" data-loss="15">Very poor</button>
+          </div>
+          <div class="vitals-form">
+            <h3>Attach vitals</h3>
+            <div class="two-col">
+              <label>Heart rate<input id="heartRate" type="number" placeholder="bpm" /></label>
+              <label>SpO2<input id="oxygenSaturation" type="number" placeholder="%" /></label>
+              <label>Systolic BP<input id="systolicBp" type="number" placeholder="mmHg" /></label>
+              <label>Diastolic BP<input id="diastolicBp" type="number" placeholder="mmHg" /></label>
+            </div>
+            <button id="vitalsButton" class="secondary" disabled>Save vitals</button>
+            <h3>Doctor assessment</h3>
+            <label>Symptoms<textarea id="symptoms" rows="2" placeholder="Patient symptoms"></textarea></label>
+            <label>Assessment<textarea id="assessment" rows="2" placeholder="Doctor assessment"></textarea></label>
+            <label>Advice<textarea id="advice" rows="2" placeholder="Advice for patient"></textarea></label>
+            <button id="assessmentButton" class="secondary" disabled>Save consultation assessment</button>
+          </div>
+          <pre id="eventLog" class="event-log" aria-live="polite"></pre>
+        </section>
+      </section>
+    </main>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

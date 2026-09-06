@@ -1,0 +1,28 @@
+{
+  "info": {
+    "name": "Telemedicine Backend",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Auth - Login",
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "url": { "raw": "http://localhost:4000/auth/login", "protocol": "http", "host": ["localhost"], "port": "4000", "path": ["auth","login"] },
+        "body": { "mode": "raw", "raw": "{\n  \"email\": \"admin@example.com\",\n  \"password\": \"password123\"\n}" }
+      }
+    },
+    {
+      "name": "Patients - List",
+      "request": {
+        "method": "GET",
+        "header": [ { "key": "Authorization", "value": "Bearer {{token}}" } ],
+        "url": { "raw": "http://localhost:4000/api/patients", "protocol": "http", "host": ["localhost"], "port": "4000", "path": ["api","patients"] }
+      }
+    }
+  ],
+  "variable": [ { "key": "token", "value": "" } ]
+}
+
+
