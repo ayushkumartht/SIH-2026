@@ -3,6 +3,67 @@ import jwt from 'jsonwebtoken';
 import Staff from '../models/Staff.js';
 import Doctor from '../models/doctor.js';
 import LabDoctor from '../models/LabDoctor.js';
+import Patient from '../models/patient.js';
+import { createDemoPatient, demoDoctorUser, demoPatientUser, findDemoPatientByEmail } from '../services/portalDemoStore.js';
+
+function patientResponse(patient) {
+  return {
+    id: patient._id,
+    name: patient.name,
+    email: patient.email,
+    role: 'patient',
+    age: patient.age,
+    gender: patient.gender,
+    contact: patient.contact,
+    doctor: patient.doctor,
+    createdAt: patient.createdAt,
+  };
+}
+
+export const patientSignup = async (req, res, next) => {
+  try {
+    const { name, email, password, age, gender, contact } = req.body;
+    if (!name || !email || !password || !age || !gender || !contact) {
+      return res.status(400).json({ success: false, error: 'Name, email, password, age, gender, and contact are required' });
+    }
+    if (!['male', 'female', 'other'].includes(gender)) {
+      return res.status(400).json({ success: false, error: 'Gender must be male, female, or other' });
+    }
+    if (process.env.DEMO_MODE === 'true') {
+      if (findDemoPatientByEmail(email)) return res.status(409).json({ success: false, error: 'A patient with this email already exists' });
+      const patient = await createDemoPatient({ name: name.trim(), email, password, age, gender, contact: contact.trim() });
+      const token = jwt.sign({ id: patient._id, role: 'patient', email: patient.email }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '1d' });
+      return res.status(201).json({ success: true, data: { token, user: demoPatientUser(patient) } });
+    }
+    const existingPatient = await Patient.findOne({ email: email.toLowerCase() });
+    if (existingPatient) return res.status(409).json({ success: false, error: 'A patient with this email already exists' });
+    const patient = await Patient.create({
+      name: name.trim(), email: email.toLowerCase(), password: await bcrypt.hash(password, 10),
+      age: Number(age), gender, contact: contact.trim(), doctor: null,
+    });
+    const token = jwt.sign({ id: patient._id, role: 'patient', email: patient.email }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '1d' });
+    res.status(201).json({ success: true, data: { token, user: patientResponse(patient) } });
+  } catch (error) { next(error); }
+};
+
+export const patientLogin = async (req, res, next) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ success: false, error: 'Email and password are required' });
+    if (process.env.DEMO_MODE === 'true') {
+      const patient = findDemoPatientByEmail(email);
+      if (!patient || !(await bcrypt.compare(password, patient.password))) return res.status(401).json({ success: false, error: 'Invalid patient credentials. Demo: patient@demo.local / demo123' });
+      const token = jwt.sign({ id: patient._id, role: 'patient', email: patient.email }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '1d' });
+      return res.json({ success: true, data: { token, user: demoPatientUser(patient) } });
+    }
+    const patient = await Patient.findOne({ email: email.toLowerCase() }).select('+password');
+    if (!patient || !patient.password || !(await bcrypt.compare(password, patient.password))) {
+      return res.status(401).json({ success: false, error: 'Invalid patient credentials' });
+    }
+    const token = jwt.sign({ id: patient._id, role: 'patient', email: patient.email }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '1d' });
+    res.json({ success: true, data: { token, user: patientResponse(patient) } });
+  } catch (error) { next(error); }
+};
 
 export const signup = async (req, res, next) => {
   try {
@@ -215,6 +276,12 @@ export const login = async (req, res, next) => {
         error: 'Email and password are required',
         statusCode: 400 
       });
+    }
+
+    if (process.env.DEMO_MODE === 'true' && email.toLowerCase() === 'doctor@demo.local' && password === 'demo123') {
+      const user = demoDoctorUser();
+      const token = jwt.sign({ id: user.id, role: 'doctor', email: user.email }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '1d' });
+      return res.json({ success: true, data: { token, user } });
     }
     
     console.log('=== LOGIN ATTEMPT ===');

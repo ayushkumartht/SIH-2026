@@ -3,10 +3,17 @@ import { findCallRoom, saveCallRoom } from "../services/callRoomStore.js";
 import { findConsultation, saveConsultation } from "../services/consultationStore.js";
 import { recordConsultationAudit } from "../services/consultationAuditStore.js";
 
+function isCallParticipant(call, user) {
+  if (process.env.DEMO_MODE === 'true') return true;
+  if (!user) return false;
+  return (user.role === 'patient' && String(call.patientId) === String(user.id)) || (user.role === 'doctor' && String(call.doctorId) === String(user.id));
+}
+
 export const updateCallQuality = async (req, res, next) => {
   try {
     const call = await findCallRoom(req.params.callId);
     if (!call) return res.status(404).json({ success: false, error: "Call room not found" });
+    if (!isCallParticipant(call, req.user)) return res.status(403).json({ success: false, error: 'You are not a participant in this call' });
 
     const quality = calculateNetworkQuality(req.body);
     const qualityRecord = {
@@ -46,6 +53,7 @@ export const recordCallVitals = async (req, res, next) => {
   try {
     const call = await findCallRoom(req.params.callId);
     if (!call) return res.status(404).json({ success: false, error: "Call room not found" });
+    if (!isCallParticipant(call, req.user)) return res.status(403).json({ success: false, error: 'You are not a participant in this call' });
 
     call.vitals.push({
       ...req.body,
@@ -73,6 +81,7 @@ export const endCall = async (req, res, next) => {
   try {
     const call = await findCallRoom(req.params.callId);
     if (!call) return res.status(404).json({ success: false, error: "Call room not found" });
+    if (!isCallParticipant(call, req.user)) return res.status(403).json({ success: false, error: 'You are not a participant in this call' });
 
     call.status = "ended";
     call.endedAt = new Date();

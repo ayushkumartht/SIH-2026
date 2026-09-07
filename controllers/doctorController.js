@@ -345,6 +345,17 @@ const createRoom = async (req, res) => {
       return res.status(400).json({ message: "doctorId and patientId are required" });
     }
 
+    if (process.env.DEMO_MODE !== "true") {
+      const actorId = String(req.user?.id || "");
+      const actorRole = req.user?.role;
+      if ((actorRole === "doctor" && actorId !== String(doctorId)) || (actorRole === "patient" && actorId !== String(patientId))) {
+        return res.status(403).json({ message: "You can only create a room for your own consultation" });
+      }
+      if (!['doctor', 'patient'].includes(actorRole)) {
+        return res.status(403).json({ message: "Only a doctor or patient can create a consultation room" });
+      }
+    }
+
     const roomId = uuidv4();
     const quality = resolveInitialNetworkQuality({ networkTier, rttMs, packetLossPercent });
     const consultation = await createConsultation({ patientId, doctorId, consent: { granted: req.body.consent === true, grantedAt: req.body.consent === true ? new Date() : undefined, grantedBy: req.user?.id || "demo" } });

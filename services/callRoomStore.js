@@ -51,3 +51,13 @@ export async function saveCallRoom(room) {
   }
   return room.save();
 }
+
+export async function findActiveRoomForAppointment(appointmentId) {
+  if (isDemoMode()) {
+    for (const room of demoRooms.values()) {
+      if (String(room.appointmentId) === String(appointmentId) && room.status === 'active') return room;
+    }
+    return null;
+  }
+  return CallRoom.findOne({ appointmentId: String(appointmentId), status: 'active' }).sort({ createdAt: -1 });
+}

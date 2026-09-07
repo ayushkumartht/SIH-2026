@@ -34,6 +34,7 @@ const CallRoomSchema = new mongoose.Schema(
   {
     roomId: { type: String, required: true, unique: true },
     consultationId: { type: String },
+    appointmentId: { type: String, index: true },
     doctorId: String,
     patientId: String,
     mode: {

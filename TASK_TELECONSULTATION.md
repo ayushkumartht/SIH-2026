@@ -69,7 +69,7 @@ Doctor assessment
 - Video providers:
   - Daily.co REST room creation.
   - Raw WebRTC signaling through Socket.IO.
-- Frontend: standalone browser test console in `frontend/`.
+- Frontend: React + Vite application in `frontend/`.
 - Backend entry point: `index.js`.
 - Daily controller: `controllers/dailyController.js`.
 - Raw room creation: `controllers/doctorController.js`.
@@ -153,7 +153,7 @@ call:ended
 
 ### Frontend
 
-- Standalone test console in `frontend/`.
+- React patient and doctor dashboards in `frontend/src/`.
 - Raw WebRTC local media capture.
 - Raw WebRTC offer/answer/ICE signaling.
 - Daily.co browser SDK loading path.
@@ -193,7 +193,9 @@ Demo mode does not require MongoDB. Its data is kept in memory and resets when t
 Serve `frontend/` on port `5173`, for example:
 
 ```powershell
-python -m http.server 5173 --directory frontend
+cd frontend
+npm install
+npm run dev
 ```
 
 Open:
@@ -381,8 +383,8 @@ Record immutable events for:
 ### Frontend
 
 - `frontend/index.html`
-- `frontend/app.js`
-- `frontend/styles.css`
+- `frontend/src/App.jsx`
+- `frontend/src/styles.css`
 
 ### Backend
 
@@ -415,7 +417,7 @@ Record immutable events for:
 
 ## Validation Checklist
 
-- [x] `node --check frontend/app.js` passes.
+- [x] `npm run build` passes in `frontend/`.
 - [x] Backend modified modules pass `node --check`.
 - [x] Demo room creation was tested.
 - [x] Demo quality update was tested.

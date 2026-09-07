@@ -8,6 +8,7 @@ import { findCallRoom, saveCallRoom } from './services/callRoomStore.js';
 import { authenticateTeleconsultationSocket } from './middleware/auth.js';
 
 dotenv.config();
+if (process.env.DEMO_MODE === "true" && !process.env.JWT_SECRET) process.env.JWT_SECRET = "local-demo-secret";
 const app = express();
 const server = http.createServer(app);
 
@@ -29,6 +30,7 @@ import appointmentRoutes from "./routes/appointmentRoutes.js";
 import emergencyRoutes from "./routes/emergencyRoutes.js"
 import offlineRequestRoute from "./routes/offlineRequestRoute.js"
 import labDoctorRoutes from "./routes/labDoctorRoutes.js"
+import portalRoutes from "./routes/portalRoutes.js"
 
 app.use("/api/doctors", doctorRoutes);
 app.use("/api/patients", patientRoutes);
@@ -38,6 +40,7 @@ app.use("/api/appointments", appointmentRoutes);
 app.use("/api/emergencies", emergencyRoutes);
 app.use("/api/lab-doctors", labDoctorRoutes);
 app.use("/offline-requests", offlineRequestRoute);
+app.use("/api/portal", portalRoutes);
 
 
 app.get("/api/health", (req, res) => {

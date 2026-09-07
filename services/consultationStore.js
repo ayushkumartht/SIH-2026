@@ -39,3 +39,8 @@ export async function saveConsultation(consultation) {
   }
   return consultation.save();
 }
+
+export function listConsultations(filter = {}) {
+  if (process.env.DEMO_MODE !== "true") return [];
+  return [...demoConsultations.values()].filter((consultation) => Object.entries(filter).every(([key, value]) => String(consultation[key]) === String(value)));
+}
