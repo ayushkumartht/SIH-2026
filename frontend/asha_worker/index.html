@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0b6b62" />
+    <title>Swasthya Saathi | ASHA Worker</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="brand"><span class="brand-mark">✦</span><div><p>Swasthya Saathi</p><strong>ASHA field desk</strong></div></div>
+        <div class="topbar-actions"><span id="networkBadge" class="status online">● Online</span><button id="languageButton" class="icon-button" title="Change language">अ</button><button class="profile" aria-label="ASHA worker profile">MG</button></div>
+      </header>
+
+      <section class="welcome">
+        <div><p class="kicker">Tuesday, 6 September</p><h1>Namaste, Muskan.</h1><p class="welcome-copy">You have <strong id="urgentGreeting">2 urgent cases</strong> and <strong id="followupGreeting">3 follow-ups</strong> today.</p></div>
+        <button class="sync-button" id="syncButton"><span>↻</span> Sync now <small id="syncCount">0 pending</small></button>
+      </section>
+
+      <nav class="tabs" aria-label="ASHA dashboard sections">
+        <button class="tab active" data-view="dashboard">Dashboard</button>
+        <button class="tab" data-view="patients">Patients</button>
+        <button class="tab" data-view="emergency">Emergency</button>
+        <button class="tab" data-view="followups">Follow-ups</button>
+      </nav>
+
+      <section id="dashboard" class="view active">
+        <div class="metrics">
+          <article><span class="metric-icon teal">⌂</span><div><strong id="householdCount">24</strong><p>Households covered</p></div></article>
+          <article><span class="metric-icon amber">!</span><div><strong id="attentionCount">3</strong><p>Need attention</p></div></article>
+          <article><span class="metric-icon red">↗</span><div><strong id="referralCount">1</strong><p>Active referral</p></div></article>
+          <article><span class="metric-icon blue">✓</span><div><strong id="visitCount">8</strong><p>Visits completed</p></div></article>
+        </div>
+
+        <div class="content-grid">
+          <section class="card care-queue"><div class="section-heading"><div><p class="kicker">Priority list</p><h2>Care queue</h2></div><button class="text-button" data-view-target="patients">View all</button></div><div id="careQueue" class="care-list"></div></section>
+          <aside class="card quick-actions"><p class="kicker">Field tools</p><h2>Quick actions</h2><button data-action="register"><span>＋</span> Register patient</button><button data-action="vitals"><span>♡</span> Record vitals</button><button data-action="consult"><span>◉</span> Start consultation</button><button class="sos-action" data-action="sos"><span>⚠</span> Raise SOS</button></aside>
+        </div>
+
+        <section class="card activity"><div class="section-heading"><div><p class="kicker">Today</p><h2>Recent activity</h2></div></div><div id="activityList" class="activity-list"></div></section>
+      </section>
+
+      <section id="patients" class="view">
+        <div class="page-heading"><div><p class="kicker">Village registry</p><h2>Patients</h2></div><button class="primary-button" data-action="register">+ Add patient</button></div>
+        <div class="search-row"><input id="patientSearch" type="search" placeholder="Search patient by name, village or phone" /><select id="riskFilter"><option value="all">All conditions</option><option value="urgent">Urgent</option><option value="attention">Needs attention</option><option value="stable">Stable</option></select></div>
+        <div id="patientDirectory" class="patient-directory"></div>
+      </section>
+
+      <section id="emergency" class="view"><div class="page-heading"><div><p class="kicker">SOS coordination</p><h2>Emergency centre</h2></div><button class="danger-button" data-action="sos">+ Create SOS</button></div><div id="emergencyPanel" class="emergency-panel"></div><div class="card emergency-guide"><h3>When a patient needs urgent help</h3><ol><li>Record symptoms and severity.</li><li>Raise SOS and share the patient location.</li><li>Request the nearest ambulance.</li><li>Pre-alert the receiving hospital.</li></ol></div></section>
+
+      <section id="followups" class="view"><div class="page-heading"><div><p class="kicker">Continuity of care</p><h2>Follow-ups</h2></div></div><div id="followupList" class="followup-list"></div></section>
+    </main>
+
+    <dialog id="patientDialog" class="dialog"><form id="patientForm" method="dialog"><div class="dialog-heading"><div><p class="kicker">New record</p><h2>Register patient</h2></div><button class="close-button" value="cancel" aria-label="Close">×</button></div><label>Patient name<input id="patientName" required placeholder="e.g. Asha Devi" /></label><div class="two-column"><label>Age<input id="patientAge" type="number" min="0" max="120" required /></label><label>Gender<select id="patientGender"><option>Female</option><option>Male</option><option>Other</option></select></label></div><label>Village<input id="patientVillage" required placeholder="Village name" /></label><label>Phone number<input id="patientPhone" inputmode="tel" placeholder="Optional" /></label><label>Symptoms<textarea id="patientSymptoms" rows="3" placeholder="Describe symptoms, if any"></textarea></label><menu><button value="cancel" class="secondary-button">Cancel</button><button id="savePatient" value="default" class="primary-button">Save locally</button></menu></form></dialog>
+
+    <dialog id="vitalsDialog" class="dialog"><form id="vitalsForm" method="dialog"><div class="dialog-heading"><div><p class="kicker">Home visit</p><h2>Record vitals</h2><p id="vitalsPatientName" class="dialog-subtitle"></p></div><button class="close-button" value="cancel" aria-label="Close">×</button></div><div class="vitals-grid"><label>Temperature °C<input id="temperature" type="number" step="0.1" placeholder="36.8" /></label><label>Heart rate<input id="heartRate" type="number" placeholder="bpm" /></label><label>SpO₂<input id="oxygen" type="number" placeholder="%" /></label><label>Respiratory rate<input id="respiratory" type="number" placeholder="/min" /></label><label>Systolic BP<input id="systolic" type="number" placeholder="mmHg" /></label><label>Diastolic BP<input id="diastolic" type="number" placeholder="mmHg" /></label></div><label>Visit notes<textarea id="visitNotes" rows="3" placeholder="Symptoms, advice or observations"></textarea></label><p class="hint">Abnormal readings will be marked for doctor review.</p><menu><button value="cancel" class="secondary-button">Cancel</button><button value="default" class="primary-button">Save vitals</button></menu></form></dialog>
+
+    <dialog id="sosDialog" class="dialog sos-dialog"><form id="sosForm" method="dialog"><div class="dialog-heading"><div><p class="kicker red-text">Emergency request</p><h2>Raise SOS</h2></div><button class="close-button" value="cancel" aria-label="Close">×</button></div><label>Patient<select id="sosPatient"></select></label><label>Severity<select id="sosSeverity"><option value="critical">Critical — immediate ambulance</option><option value="high">High — urgent doctor review</option><option value="moderate">Moderate — same day visit</option></select></label><label>Emergency details<textarea id="sosDetails" rows="3" required placeholder="What happened? Include symptoms or injury."></textarea></label><label>Location<input id="sosLocation" value="Current village location" required /></label><menu><button value="cancel" class="secondary-button">Cancel</button><button value="default" class="danger-button">Raise SOS & find ambulance</button></menu></form></dialog>
+
+    <div id="toast" class="toast" role="status"></div>
+    <script src="./app.js"></script>
+  </body>
+</html>
