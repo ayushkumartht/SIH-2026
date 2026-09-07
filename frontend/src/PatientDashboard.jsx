@@ -1,5 +1,63 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import LiveConsultation from "./LiveConsultation";
+
+// ─── LeafletMap component (used in hospitals tab + location sharing) ───────────
+function LeafletMap({ markers = [], center, zoom = 13, height = "380px", onHospitalClick }) {
+  const mapRef = useRef(null);
+  const instanceRef = useRef(null);
+
+  useEffect(() => {
+    if (instanceRef.current) return;
+    import("leaflet").then((L) => {
+      delete L.default.Icon.Default.prototype._getIconUrl;
+      L.default.Icon.Default.mergeOptions({
+        iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
+        iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
+        shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+      });
+      if (!mapRef.current) return;
+      const map = L.default.map(mapRef.current).setView(center || [30.3753, 76.7821], zoom);
+      L.default.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: "\u00a9 OpenStreetMap contributors",
+        maxZoom: 18,
+      }).addTo(map);
+      instanceRef.current = { map, L: L.default, markers: [] };
+      addMarkers(markers, instanceRef.current, onHospitalClick);
+    });
+    return () => {
+      if (instanceRef.current?.map) {
+        instanceRef.current.map.remove();
+        instanceRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!instanceRef.current) return;
+    const { map, L, markers: existing } = instanceRef.current;
+    existing.forEach((m) => m.remove());
+    instanceRef.current.markers = [];
+    addMarkers(markers, instanceRef.current, onHospitalClick);
+    if (center) map.setView(center, zoom);
+  }, [markers, center, zoom]);
+
+  function addMarkers(list, ctx, onClick) {
+    if (!ctx || !list.length) return;
+    list.forEach((m) => {
+      const marker = ctx.L.marker([m.lat, m.lng]).addTo(ctx.map);
+      if (m.popup) marker.bindPopup(m.popup);
+      if (onClick && m.id) marker.on("click", () => onClick(m.id));
+      ctx.markers.push(marker);
+    });
+  }
+
+  return (
+    <div
+      ref={mapRef}
+      style={{ height, width: "100%", borderRadius: "12px", border: "1px solid #dce7e0", overflow: "hidden" }}
+    />
+  );
+}
 
 const API = (import.meta.env.VITE_API_URL || "http://localhost:3000").replace(
   /\/$/,
@@ -81,6 +139,12 @@ export default function PatientDashboard({ session, onLogout }) {
     },
     { id: 2, text: "Keep your contact number up to date.", read: false },
   ]);
+  const [locationShared, setLocationShared] = useState(false);
+  const [locationLoading, setLocationLoading] = useState(false);
+  const [hospitals, setHospitals] = useState([]);
+  const [hospitalsLoading, setHospitalsLoading] = useState(false);
+  const [selectedHospital, setSelectedHospital] = useState(null);
+  const [userCoords, setUserCoords] = useState(null);
   const t = labels[language];
   const unread = notifications.filter((item) => !item.read).length;
   async function load() {
@@ -187,9 +251,59 @@ export default function PatientDashboard({ session, onLogout }) {
     ["consultations", t.consultations],
     ["prescriptions", t.prescriptions],
     ["reports", t.reports],
+    ["hospitals", "Hospitals & Map"],
     ["profile", t.profile],
     ["help", t.help],
   ];
+
+  async function shareLocation() {
+    setLocationLoading(true);
+    try {
+      const pos = await new Promise((resolve, reject) =>
+        navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 })
+      );
+      const { latitude, longitude, accuracy } = pos.coords;
+      setUserCoords({ lat: latitude, lng: longitude });
+      // Find an active consultation to attach the location to
+      const activeConsult = data?.consultations?.find((c) => c.status === "active");
+      if (activeConsult) {
+        await api("/api/portal/patient/location", session.token, {
+          method: "POST",
+          body: JSON.stringify({
+            consultationId: activeConsult._id,
+            latitude,
+            longitude,
+            accuracyMeters: accuracy,
+            consent: true,
+          }),
+        });
+      }
+      setLocationShared(true);
+      setMessage("Location shared with your doctor!");
+    } catch (e) {
+      setMessage("Could not get your location: " + (e.message || "Permission denied"));
+    }
+    setLocationLoading(false);
+  }
+
+  async function loadNearbyHospitals() {
+    setHospitalsLoading(true);
+    try {
+      const pos = await new Promise((resolve, reject) =>
+        navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 })
+      );
+      const { latitude, longitude } = pos.coords;
+      setUserCoords({ lat: latitude, lng: longitude });
+      const result = await api(
+        `/api/portal/patient/hospitals/nearby?lat=${latitude}&lng=${longitude}&radius=30`,
+        session.token,
+      );
+      setHospitals(result);
+    } catch (e) {
+      setMessage("Could not load hospitals: " + (e.message || "Location denied"));
+    }
+    setHospitalsLoading(false);
+  }
   return (
     <div className="patient-app">
       <header className="patient-header">
@@ -227,7 +341,7 @@ export default function PatientDashboard({ session, onLogout }) {
             }}
             aria-label={`${unread} unread notifications`}
           >
-            🔔<b>{unread}</b>
+            Notifications ({unread})
           </button>
           <button className="button button-dark" onClick={onLogout}>
             Sign out
@@ -297,6 +411,24 @@ export default function PatientDashboard({ session, onLogout }) {
                   "Your demo profile settings were saved on this device.",
                 )
               }
+            />
+          )}
+          {tab === "hospitals" && (
+            <HospitalsView
+              session={session}
+              userCoords={userCoords}
+              setUserCoords={setUserCoords}
+              hospitals={hospitals}
+              setHospitals={setHospitals}
+              hospitalsLoading={hospitalsLoading}
+              setHospitalsLoading={setHospitalsLoading}
+              selectedHospital={selectedHospital}
+              setSelectedHospital={setSelectedHospital}
+              locationShared={locationShared}
+              locationLoading={locationLoading}
+              consultations={data.consultations}
+              onShareLocation={shareLocation}
+              onMessage={setMessage}
             />
           )}
           {tab === "help" && <HelpView onStart={() => openFlow()} />}
@@ -376,7 +508,7 @@ function HomeView({
       </section>
       <section className="patient-quick">
         <button onClick={() => onTab("start")}>
-          👩‍⚕️<span>Find a doctor</span>
+          <span>Find a doctor</span>
         </button>
         <button onClick={onStart}>
           ＋<span>Book appointment</span>
@@ -441,7 +573,7 @@ function HomeView({
             ))
           ) : (
             <EmptyState
-              icon="♡"
+              icon="P"
               title="Your care history is empty"
               text="Completed consultation notes and follow-ups will appear here."
             />
@@ -622,7 +754,108 @@ function ReportsView() {
     </section>
   );
 }
+// ─── HospitalsView — Live Leaflet map + nearby hospitals ──────────────────────
+function HospitalsView({ session, userCoords, setUserCoords, hospitals, setHospitals, hospitalsLoading, setHospitalsLoading, selectedHospital, setSelectedHospital, locationShared, locationLoading, onShareLocation, onMessage }) {
+  const API_BASE = (import.meta.env.VITE_API_URL || "http://localhost:3000").replace(/\/$/, "");
+  const hasFetched = useRef(false);
+
+  async function fetchHospitals(lat, lng) {
+    setHospitalsLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/portal/patient/hospitals/nearby?lat=${lat}&lng=${lng}&radius=30`, { headers: { Authorization: `Bearer ${session.token}` } });
+      const body = await res.json().catch(() => ({}));
+      setHospitals(body.data || []);
+    } catch { onMessage("Could not load nearby hospitals."); }
+    setHospitalsLoading(false);
+  }
+
+  function handleLocate() {
+    if (!navigator.geolocation) { onMessage("GPS not supported on this device."); return; }
+    setHospitalsLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => { const { latitude: lat, longitude: lng } = pos.coords; setUserCoords({ lat, lng }); fetchHospitals(lat, lng); },
+      (err) => { setHospitalsLoading(false); onMessage("Location error: " + (err.message || "Permission denied")); },
+      { timeout: 12000, enableHighAccuracy: true }
+    );
+  }
+
+  useEffect(() => {
+    if (hasFetched.current) return;
+    hasFetched.current = true;
+    if (userCoords) fetchHospitals(userCoords.lat, userCoords.lng);
+    else handleLocate();
+  }, []);
+
+  const mapMarkers = [
+    ...(userCoords ? [{ id: "user", lat: userCoords.lat, lng: userCoords.lng, popup: "<b>Your Location</b>" }] : []),
+    ...hospitals.map((h) => ({ id: h._id, lat: h.latitude, lng: h.longitude, popup: `<b>${h.name}</b><br>${h.type?.toUpperCase()}<br>${h.distanceKm} km<br>Contact: ${h.contact || "N/A"}` })),
+  ];
+  const mapCenter = selectedHospital ? [selectedHospital.latitude, selectedHospital.longitude] : userCoords ? [userCoords.lat, userCoords.lng] : undefined;
+  const typeLabel = (t) => ({ district: "District Hospital", phc: "Primary Health Centre (PHC)", chc: "Community Health Centre (CHC)", private: "Private Hospital" }[t] || t || "Hospital");
+
+  return (
+    <section style={{ animation: "fadeInUp .28s ease" }}>
+      <div className="hosp-page-header">
+        <div>
+          <p className="kicker">Healthcare access</p>
+          <h1 style={{ margin: "0 0 6px", color: "#0d2f30", font: "700 28px/1.1 'Space Grotesk',sans-serif" }}>
+            Nearby Hospitals &amp; Health Centres
+          </h1>
+          <p style={{ margin: 0, color: "#617476", fontSize: 14 }}>Government hospitals, PHCs, and CHCs near your current location</p>
+        </div>
+        <button className="button button-soft" onClick={handleLocate}>Refresh Location</button>
+      </div>
+
+      {locationShared
+        ? <div className="loc-shared-note"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>GPS location shared with your doctor</div>
+        : <button className="loc-btn" onClick={onShareLocation} disabled={locationLoading}>{locationLoading ? <span className="loc-spinner" /> : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>}{locationLoading ? "Fetching GPS…" : "Share My Location with Doctor"}</button>
+      }
+
+      <div className="hosp-map-wrap">
+        {hospitalsLoading && !hospitals.length
+          ? <div style={{ height: 380, display: "grid", placeContent: "center", color: "#617476", gap: 12, background: "#f5f8f5", borderRadius: 12 }}><div style={{ width: 36, height: 36, border: "3px solid #dce7e0", borderTopColor: "#0c6c56", borderRadius: "50%", animation: "spin .7s linear infinite", margin: "0 auto" }} /><span style={{ textAlign: "center" }}>Detecting location…</span></div>
+          : mapMarkers.length
+            ? <LeafletMap markers={mapMarkers} center={mapCenter} zoom={userCoords ? 13 : 12} height="400px" onHospitalClick={(id) => { const h = hospitals.find((x) => x._id === id); if (h) setSelectedHospital(h); }} />
+            : <div style={{ height: 300, display: "grid", placeContent: "center", color: "#617476", gap: 14, background: "#f5f8f5", borderRadius: 12, textAlign: "center" }}><p>Enable GPS to see hospitals on the map</p><button className="button button-green" onClick={handleLocate}>Enable GPS Location</button></div>
+        }
+      </div>
+
+      {hospitals.length > 0 && (
+        <div className="hosp-list" style={{ marginTop: 20 }}>
+          <h3 style={{ margin: "0 0 14px", color: "#0d2f30", font: "700 16px 'Space Grotesk',sans-serif" }}>{hospitals.length} Health {hospitals.length === 1 ? "Facility" : "Facilities"} Found</h3>
+          {hospitals.map((h, i) => (
+            <div key={h._id} className={`hosp-card ${selectedHospital?._id === h._id ? "selected" : ""}`} style={{ animationDelay: `${i * 0.05}s`, animation: "fadeInUp .25s ease both" }} onClick={() => setSelectedHospital(selectedHospital?._id === h._id ? null : h)}>
+              <div className="hosp-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0c6c56" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 8v8M8 12h8"/></svg></div>
+              <div className="hosp-meta">
+                <b>{h.name}</b>
+                <span className={`hosp-type-badge ${h.type || ""}`}>{typeLabel(h.type)}</span>
+                {h.address && <small>{h.address}</small>}
+                {h.contact && <small>Contact: {h.contact}</small>}
+                {h.beds && <small>Beds: {h.beds}</small>}
+                {h.facilities?.length > 0 && <div className="hosp-facilities">{h.facilities.slice(0, 5).map((f) => <span key={f} className="hosp-facility-chip">{f}</span>)}</div>}
+                {h.doctors?.length > 0 && <div className="hosp-doctors">Doctors: {h.doctors.slice(0, 3).map((d) => d.name || "Doctor").join(", ")}{h.doctors.length > 3 ? ` +${h.doctors.length - 3} more` : ""}</div>}
+              </div>
+              <div style={{ textAlign: "right", flexShrink: 0, display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
+                <span className="hosp-dist">{h.distanceKm} km</span>
+                {h.contact && <a href={`tel:${h.contact}`} className="button button-soft" style={{ padding: "6px 14px", fontSize: 12, textDecoration: "none" }} onClick={(e) => e.stopPropagation()}>Call</a>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!hospitalsLoading && hospitals.length === 0 && userCoords && (
+        <div style={{ padding: "40px 20px", textAlign: "center", color: "#617476", background: "white", borderRadius: 14, border: "1px solid #dce7e0", marginTop: 16 }}>
+          <p style={{ margin: "0 0 14px" }}>No hospitals found within 30 km of your location.</p>
+          <button className="button button-outline" onClick={handleLocate}>Search Again</button>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function ProfileView({ profile, language, onSaved }) {
+
   const [saved, setSaved] = useState(false);
   return (
     <section>
@@ -793,13 +1026,13 @@ function ConsultationFlow({ flow, setFlow, doctors, onConfirm }) {
                 className={flow.microphone ? "ok" : ""}
                 onClick={() => update({ microphone: !flow.microphone })}
               >
-                🎙 Microphone {flow.microphone ? "ready" : "off"}
+                Microphone {flow.microphone ? "ready" : "off"}
               </button>
               <button
                 className={flow.camera ? "ok" : ""}
                 onClick={() => update({ camera: !flow.camera })}
               >
-                📷 Camera {flow.camera ? "ready" : "off"}
+                Camera {flow.camera ? "ready" : "off"}
               </button>
             </div>
             <p>
@@ -921,12 +1154,12 @@ function CallScreen({ call, onClose }) {
       </main>
       <footer>
         <button onClick={() => setMic(!mic)}>
-          {mic ? "🎙 Mute" : "🎙 Unmute"}
+          {mic ? "Mute" : "Unmute"}
         </button>
         <button onClick={() => setCamera(!camera)}>
-          📷 {camera ? "Camera off" : "Camera on"}
+          {camera ? "Camera off" : "Camera on"}
         </button>
-        <button onClick={() => setQuality("HD video")}>↻ Reconnect</button>
+        <button onClick={() => setQuality("HD video")}>Reconnect</button>
         <button className="end-call" onClick={onClose}>
           End consultation
         </button>

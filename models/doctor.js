@@ -81,6 +81,12 @@ const doctorSchema = new mongoose.Schema(
         ref: "Emergency",
       },
     ],
+
+    hospital: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Hospital",
+      default: null,
+    },
   },
   {
     timestamps: true, 

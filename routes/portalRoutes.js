@@ -11,6 +11,9 @@ import {
   getDoctorDashboard,
   getDoctorPatients,
   getDoctorCallCare,
+  getNearbyHospitals,
+  getDoctorHospital,
+  getPatientLocationForDoctor,
 } from "../controllers/portalController.js";
 import {
   createOrJoinAppointmentCall,
@@ -45,6 +48,16 @@ router.post(
   authorizeRole(["patient"]),
   sharePatientLocation,
 );
+router.get(
+  "/patient/hospitals/nearby",
+  authorizeRole(["patient"]),
+  getNearbyHospitals,
+);
+router.get(
+  "/patient/doctors/:doctorId/hospital",
+  authorizeRole(["patient"]),
+  getDoctorHospital,
+);
 router.post(
   "/calls/session",
   authorizeRole(["patient", "doctor"]),
@@ -68,5 +81,11 @@ router.get(
   authorizeRole(["doctor"]),
   getDoctorCallCare,
 );
+router.get(
+  "/doctor/consultations/:consultationId/patients/:patientId/location",
+  authorizeRole(["doctor"]),
+  getPatientLocationForDoctor,
+);
 
 export default router;
+

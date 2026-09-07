@@ -4,6 +4,7 @@ import Doctor from "../models/doctor.js";
 import Patient from "../models/patient.js";
 import LabReport from "../models/labReport.js";
 import PatientLocation from "../models/PatientLocation.js";
+import Hospital from "../models/Hospital.js";
 import { findCallRoom } from "../services/callRoomStore.js";
 import {
   findConsultation,
@@ -389,6 +390,95 @@ export async function getDoctorPatients(req, res, next) {
       .select("name email age gender contact history reports createdAt")
       .sort({ name: 1 });
     res.json({ success: true, data: patients });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// Haversine formula to calculate distance between two lat/lng points in km
+function haversineKm(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+export async function getNearbyHospitals(req, res, next) {
+  try {
+    const lat = parseFloat(req.query.lat);
+    const lng = parseFloat(req.query.lng);
+    const radius = parseFloat(req.query.radius) || 30; // km
+    if (!Number.isFinite(lat) || !Number.isFinite(lng))
+      return res.status(400).json({ success: false, error: "lat and lng are required" });
+
+    if (process.env.DEMO_MODE === "true") {
+      // Return demo hospitals around the provided coordinates
+      const demoHospitals = [
+        { _id: "demo-h1", name: "District Hospital Nabha", type: "district", address: "Nabha, Punjab", city: "Nabha", contact: "01765-220000", latitude: lat + 0.01, longitude: lng + 0.01, beds: 200, facilities: ["Emergency", "ICU", "OT"], doctors: [] },
+        { _id: "demo-h2", name: "PHC Sanaur", type: "phc", address: "Sanaur, Patiala", city: "Sanaur", contact: "0175-2700001", latitude: lat - 0.02, longitude: lng + 0.015, beds: 30, facilities: ["OPD", "Maternity"], doctors: [] },
+        { _id: "demo-h3", name: "CHC Rajpura", type: "chc", address: "Rajpura, Punjab", city: "Rajpura", contact: "01762-234567", latitude: lat + 0.03, longitude: lng - 0.02, beds: 50, facilities: ["Emergency", "OPD", "Lab"], doctors: [] },
+      ];
+      const withDistance = demoHospitals.map((h) => ({
+        ...h,
+        distanceKm: haversineKm(lat, lng, h.latitude, h.longitude).toFixed(2),
+      }));
+      return res.json({ success: true, data: withDistance });
+    }
+
+    const hospitals = await Hospital.find({ isActive: true })
+      .populate("doctors", "name specialization status");
+
+    const nearby = hospitals
+      .map((h) => ({
+        ...h.toObject(),
+        distanceKm: haversineKm(lat, lng, h.latitude, h.longitude).toFixed(2),
+      }))
+      .filter((h) => parseFloat(h.distanceKm) <= radius)
+      .sort((a, b) => parseFloat(a.distanceKm) - parseFloat(b.distanceKm));
+
+    res.json({ success: true, data: nearby });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getDoctorHospital(req, res, next) {
+  try {
+    const { doctorId } = req.params;
+    if (process.env.DEMO_MODE === "true")
+      return res.json({ success: true, data: null });
+    const doctor = await Doctor.findById(doctorId)
+      .populate("hospital")
+      .select("name specialization hospital");
+    if (!doctor)
+      return res.status(404).json({ success: false, error: "Doctor not found" });
+    res.json({ success: true, data: doctor.hospital || null });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getPatientLocationForDoctor(req, res, next) {
+  try {
+    const { patientId, consultationId } = req.params;
+    if (process.env.DEMO_MODE === "true")
+      return res.json({ success: true, data: null });
+    // Only the assigned doctor can view patient location
+    const consultation = await Consultation.findById(consultationId);
+    if (!consultation || String(consultation.doctorId) !== String(req.user.id))
+      return res.status(403).json({ success: false, error: "Access denied" });
+    const location = await PatientLocation.findOne({
+      consultationId: String(consultationId),
+      patientId: String(patientId),
+      expiresAt: { $gt: new Date() },
+    }).sort({ updatedAt: -1 });
+    res.json({ success: true, data: location ? { latitude: location.latitude, longitude: location.longitude, accuracyMeters: location.accuracyMeters, expiresAt: location.expiresAt } : null });
   } catch (error) {
     next(error);
   }
