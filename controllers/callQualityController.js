@@ -4,7 +4,6 @@ import { findConsultation, saveConsultation } from "../services/consultationStor
 import { recordConsultationAudit } from "../services/consultationAuditStore.js";
 
 function isCallParticipant(call, user) {
-  if (process.env.DEMO_MODE === 'true') return true;
   if (!user) return false;
   return (user.role === 'patient' && String(call.patientId) === String(user.id)) || (user.role === 'doctor' && String(call.doctorId) === String(user.id));
 }

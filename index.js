@@ -1,64 +1,36 @@
-import express from "express";
 import dotenv from "dotenv";
-import cors from "cors";
-import http  from 'http';
+import http from 'http';
 import { Server } from 'socket.io';
 import { calculateNetworkQuality } from './utils/networkQuality.js';
 import { findCallRoom, saveCallRoom } from './services/callRoomStore.js';
 import { authenticateTeleconsultationSocket } from './middleware/auth.js';
 
-dotenv.config();
-if (process.env.DEMO_MODE === "true" && !process.env.JWT_SECRET) process.env.JWT_SECRET = "local-demo-secret";
-const app = express();
-const server = http.createServer(app);
+dotenv.config({ quiet: true });
 
-app.use(express.json());
-app.use(cors());
-
-import connectDB from "./config/db.js";
-if (process.env.DEMO_MODE === "true") {
-  console.log("Demo mode enabled: MongoDB is bypassed for teleconsultation testing");
-} else {
-  connectDB();
+if (!process.env.JWT_SECRET) {
+  console.error("FATAL: JWT_SECRET is not set. Configure it in your .env file before starting the server.");
+  process.exit(1);
+}
+if (!process.env.MONGO_URI) {
+  console.error("FATAL: MONGO_URI is not set. Configure it in your .env file before starting the server.");
+  process.exit(1);
 }
 
-import doctorRoutes from "./routes/doctorRoutes.js";
-import patientRoutes from "./routes/patientRoutes.js";
-import authRoutes from "./routes/authRoutes.js";
-import staffRoutes from "./routes/staffRoutes.js";
-import appointmentRoutes from "./routes/appointmentRoutes.js";
-import emergencyRoutes from "./routes/emergencyRoutes.js"
-import offlineRequestRoute from "./routes/offlineRequestRoute.js"
-import labDoctorRoutes from "./routes/labDoctorRoutes.js"
-import portalRoutes from "./routes/portalRoutes.js"
+const corsOrigins = (process.env.CORS_ORIGIN || "http://localhost:5173")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
-app.use("/api/doctors", doctorRoutes);
-app.use("/api/patients", patientRoutes);
-app.use("/api/auth", authRoutes);
-app.use("/api/staff", staffRoutes);
-app.use("/api/appointments", appointmentRoutes);
-app.use("/api/emergencies", emergencyRoutes);
-app.use("/api/lab-doctors", labDoctorRoutes);
-app.use("/offline-requests", offlineRequestRoute);
-app.use("/api/portal", portalRoutes);
+import connectDB from "./config/db.js";
+connectDB();
 
+import app from "./app.js";
 
-app.get("/api/health", (req, res) => {
-  res.status(200).json({
-    success: true,
-    message: "Server is running successfully",
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime()
-  });
-});
-
-app.get("/", (req, res) => {
-  res.send("API is running...");
-});
+const server = http.createServer(app);
 
 // Create Socket.IO server
 const io = new Server(server, {
-  cors: { origin: '*' }, // allow RN app to connect
+  cors: { origin: corsOrigins },
 });
 app.set('io', io);
 io.use(authenticateTeleconsultationSocket);
@@ -73,9 +45,8 @@ io.on('connection', (socket) => {
       const call = await findCallRoom(roomId);
       if (!call) throw new Error('Call room not found');
 
-      const isDemo = process.env.DEMO_MODE === 'true';
       const userId = String(socket.user?.id || '');
-      const allowed = isDemo || userId === String(call.doctorId) || userId === String(call.patientId);
+      const allowed = userId === String(call.doctorId) || userId === String(call.patientId);
       if (!allowed) throw new Error('You are not a participant in this call');
 
       socket.join(roomId);

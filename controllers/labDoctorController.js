@@ -1,46 +1,3 @@
-import LabDoctor from "../models/LabDoctor.js";
-import mongoose from "mongoose";
-
-// Middleware-like function to validate lab doctor ID
-const getLabDoctorFromParams = async (req, res, next) => {
-  try {
-    const { doctorId } = req.params;
-    
-    if (!doctorId) {
-      return res.status(400).json({
-        success: false,
-        message: "Doctor ID is required"
-      });
-    }
-    
-    if (!mongoose.Types.ObjectId.isValid(doctorId)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid doctor ID format"
-      });
-    }
-    
-    const labDoctor = await LabDoctor.findById(doctorId);
-    if (!labDoctor) {
-      return res.status(404).json({
-        success: false,
-        message: "Lab Doctor not found"
-      });
-    }
-    
-    req.labDoctor = labDoctor;
-    req.doctorId = doctorId;
-    next();
-  } catch (error) {
-    console.error("Error in getLabDoctorFromParams middleware:", error);
-    res.status(500).json({
-      success: false,
-      message: "Server error while validating doctor ID",
-      error: error.message
-    });
-  }
-};
-
 export const getLabDoctorDetails = async (req, res) => {
   try {
     // Lab doctor is already validated by middleware and attached to req.labDoctor
@@ -66,11 +23,18 @@ export const addLabPatient = async (req, res) => {
     const labDoctor = req.labDoctor;
     
     const { name, age, gender, contact, history } = req.body;
+    const parsedAge = parseInt(age, 10);
+    if (!name || !Number.isInteger(parsedAge) || !gender) {
+      return res.status(400).json({
+        success: false,
+        message: "name, age and gender are required"
+      });
+    }
 
     // Create new patient object
     const newPatient = {
       name,
-      age: parseInt(age),
+      age: parsedAge,
       gender,
       contact: contact || '',
       history: history || '',

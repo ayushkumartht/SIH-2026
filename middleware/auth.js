@@ -22,17 +22,9 @@ export const authorizeRole = (roles = []) => {
   };
 };
 
-export const authenticateTeleconsultation = (req, res, next) => {
-  if (process.env.DEMO_MODE === 'true') return next();
-  return authenticateToken(req, res, next);
-};
+export const authenticateTeleconsultation = (req, res, next) => authenticateToken(req, res, next);
 
 export const authenticateTeleconsultationSocket = (socket, next) => {
-  if (process.env.DEMO_MODE === 'true') {
-    socket.user = { role: 'demo' };
-    return next();
-  }
-
   const token = socket.handshake.auth?.token;
   if (!token) return next(new Error('Authentication required'));
 

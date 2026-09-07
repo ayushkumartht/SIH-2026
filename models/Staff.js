@@ -14,7 +14,7 @@ const staffSchema = new mongoose.Schema(
     name: { type: String, required: true, trim: true },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     password: { type: String, required: true },
-    role: { type: String, enum: ['admin', 'receptionist', 'doctor', 'lab'], required: true },
+    role: { type: String, enum: ['admin', 'receptionist', 'doctor', 'lab', 'asha'], required: true },
     shiftSchedule: { type: [shiftSchema], default: [] },
     status: { type: String, enum: ['active', 'inactive'], default: 'active' },
   },

@@ -46,7 +46,7 @@ export async function getAvailableSlots(doctorId, date) {
   const booked = await Appointment.find({
     doctorId,
     date: { $gte: startOfDay, $lte: endOfDay },
-    status: 'scheduled'
+    status: 'confirmed'
   }, 'time').lean();
 
   const bookedSet = new Set(booked.map(b => formatTimeHHMM(b.time)));
@@ -72,7 +72,7 @@ export async function bookAppointmentAtomically({ patient, doctorId, date, time,
         doctorId,
         date: { $gte: startOfDay, $lte: endOfDay },
         time: formatTimeHHMM(time),
-        status: 'scheduled'
+        status: 'confirmed'
       }).session(session);
 
       if (existing) throw new Error('Slot already booked');
@@ -83,7 +83,7 @@ export async function bookAppointmentAtomically({ patient, doctorId, date, time,
         date,
         time: formatTimeHHMM(time),
         appointmentType,
-        status: 'scheduled'
+        status: 'confirmed'
       }], { session });
 
       appointment = appointment[0];
@@ -110,13 +110,22 @@ export async function tryLockAndBook({ patient, doctorId, date, time, appointmen
   }
 
   try {
+    const { startOfDay, endOfDay } = getDateRange(date);
+    const existing = await Appointment.findOne({
+      doctorId,
+      date: { $gte: startOfDay, $lte: endOfDay },
+      time: formattedTime,
+      status: 'confirmed',
+    });
+    if (existing) throw new Error('Slot already booked');
+
     const appointment = await Appointment.create({
       patient,
       doctorId,
       date,
       time: formattedTime,
       appointmentType,
-      status: 'scheduled'
+      status: 'confirmed'
     });
     return appointment;
   } catch (err) {

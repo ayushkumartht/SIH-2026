@@ -1,147 +1,101 @@
-# 404
+# Nabha Care — Rural Telemedicine Platform
 
-# 🌍 Nabha Rural Healthcare & Telemedicine Platform  
+A telemedicine and hospital-coordination platform built for **SIH 2026**, addressing the healthcare access gap in Nabha and its 173 surrounding villages in Punjab — where the Civil Hospital runs at under 50% staffed capacity and only ~31% of rural households have internet access.
 
-A **telemedicine and hospital management system** designed to address the severe healthcare challenges faced by Nabha and surrounding rural villages.  
-This platform connects **patients, doctors, lab staff, receptionists, pharmacies, and administrators** into a single digital ecosystem with **offline access, video consultations, and real-time medical updates**.  
+## Problem context
 
----
+- Civil Hospital Nabha: 11 doctors for 23 sanctioned posts.
+- Patients travel long distances only to find specialists unavailable or medicines out of stock.
+- Low, unreliable rural connectivity makes standard video-call telemedicine unreliable.
 
-## 📌 Problem Context  
+## What's implemented
 
-Nabha and its surrounding rural areas face significant healthcare challenges:  
-- Civil Hospital operates at less than 50% staff capacity (only **11 doctors for 23 sanctioned posts**).  
-- Patients from **173 villages** travel long distances, often missing work, only to discover:  
-  - Specialists are unavailable.  
-  - Medicines are out of stock.  
-- Poor road conditions and sanitation further hinder timely access to care.  
-- Limited internet access (**only 31% of rural Punjab households are connected**) makes modern healthcare services inaccessible.  
+### Patient
+- Registration/login, doctor discovery, appointment booking with real slot-conflict prevention.
+- Video/audio teleconsultation over WebRTC, with adaptive quality (HD → low-res → audio-only) based on live RTT/packet-loss.
+- Consent-gated, time-boxed (2-hour) live location sharing with the assigned doctor during a call.
+- Emergency SOS with geolocated ambulance dispatch tracking.
+- Medicine availability lookup across hospitals.
+- Rule-based symptom triage (transparent keyword screen — not a diagnosis).
+- Prescription history with PDF export.
+- Offline-tolerant dashboard: cached record snapshot + an offline action queue (e.g. bookings made without connectivity sync automatically once back online).
+- English / Hindi / Punjabi language switch.
 
----
+### Doctor
+- Queue, patient list, consultation history and clinical assessment editor.
+- Live consultation with real-time network-quality indicator and vitals capture.
+- Emergency alert queue with acknowledge/resolve actions.
+- Patient live-location viewer (consent-gated, map-based).
 
-## 🚨 Impact  
+### ASHA worker
+- Field patient registration with recorded consent.
+- Assisted vitals recording against a consultation.
+- Consent-based field-visit location capture on a live map.
+- Explicitly cannot prescribe, diagnose, or see unrelated patients — matches real ASHA role boundaries.
 
-This situation directly affects:  
-- **Daily-wage earners and farmers** → lose income due to travel and waiting.  
-- **Patients with chronic conditions** → worsened health outcomes due to delays.  
-- **Community well-being** → preventable complications increase healthcare costs.  
+### Admin / Receptionist
+- Emergency dispatch console: nearest-ambulance suggestion (geodistance) and a validated dispatch state machine (pending → assigned → dispatched → en route → arrived → at hospital → handed over → closed).
+- Ambulance and driver fleet management.
+- Pharmacy stock management.
+- Staff account management (admin only).
 
-Solving this issue will:  
-✅ Improve healthcare delivery.  
-✅ Reduce unnecessary travel.  
-✅ Enhance quality of life in rural Punjab.  
-✅ Provide a **scalable model** for rural India.  
+### Backend/platform
+- Node.js + Express + MongoDB (Mongoose), JWT auth with per-role authorization.
+- Socket.IO for WebRTC signaling and live call-quality/emergency updates.
+- SMS-based offline appointment booking (TextBee gateway) for patients without a smartphone.
+- Helmet, rate limiting, and a CORS allowlist.
+- Automated test suite (Jest + Supertest) covering auth, booking conflicts, ASHA consent rules, and the emergency dispatch lifecycle.
 
----
+## Tech stack
 
-## 🎯 Expected Outcomes  
+See [avika.md](avika.md) for a slide-ready summary.
 
-- ✅ **Multilingual Telemedicine App** for **video consultations** with doctors.  
-- ✅ **Digital Health Records (EHR)** accessible **offline** for rural patients.  
-- ✅ **Real-time updates** on medicine availability at local pharmacies.  
-- ✅ **AI-powered Symptom Checker** optimized for low-bandwidth areas.  
-- ✅ **Doctor & Hospital Management System** for appointments, reports, and emergencies.  
-- ✅ **Scalable framework** for replication in other regions.  
+## Getting started
 
----
+1. Install MongoDB (local service or Atlas) and set `MONGO_URI` in `.env` (copy from `.env.example`).
+2. Set a real `JWT_SECRET` in `.env`. The server refuses to start without `MONGO_URI`/`JWT_SECRET`.
+3. Install and seed:
+   ```powershell
+   npm install
+   npm run seed
+   npm run dev
+   ```
+4. In another terminal:
+   ```powershell
+   cd frontend
+   npm install
+   npm run dev
+   ```
+5. Open `http://localhost:5173`. Routes: `/patient`, `/doctor`, `/asha`, `/admin`, `/docs`.
 
-## 👥 Stakeholders  
+`npm run seed` prints every seeded account. All seeded passwords are `demo123`:
 
-- **Rural Patients** → Access healthcare from home, no unnecessary travel.  
-- **Doctors & Lab Staff** → Manage patients, upload reports, provide remote consultations.  
-- **Receptionists** → Manage appointments, notify patients, track emergencies.  
-- **Admins** → Oversee hospital operations, staff management, and reporting.  
-- **Local Pharmacies** → Provide stock updates, linked with prescriptions.  
-- **Punjab Health Department** → Monitor healthcare delivery at scale.  
+| Role | Email |
+|---|---|
+| Admin | admin@demo.local |
+| Receptionist | receptionist@demo.local |
+| Doctor | doctor@demo.local (+ 2 more) |
+| Lab | lab@demo.local |
+| ASHA | asha@demo.local |
+| Patient | patient@demo.local (+ 1 more) |
 
----
+## Testing
 
-## 🏥 Features – Hospital Side  
+```powershell
+npm test
+```
 
-### 👨‍⚕️ Doctors
-- View **assigned patients** and their medical history.  
-- Add **diagnosis, prescriptions, and digital reports**.  
-- Access **lab reports** uploaded by Lab Doctors.  
-- Mark **availability status** (Busy, Free, On Leave).  
-- Conduct **video consultations** with rural patients.  
+Runs the Jest/Supertest suite against an isolated `nabhacare_test` MongoDB database (never touches your seeded dev data).
 
-### 🧪 Lab Doctors
-- Upload **lab reports** (blood test, scans, x-rays).  
-- Maintain **diagnostic history** for patients.  
-- Share findings directly with treating doctors.  
+## Architecture notes
 
-### 💁 Receptionists
-- Manage **appointments** (book, cancel, reschedule).  
-- View **doctor availability** in real-time.  
-- **Notify patients** when reports are ready.  
-- Raise **emergency alerts** for doctors.  
+- `app.js` — the configured Express app (routes, middleware) with no side effects, importable directly by tests.
+- `index.js` — the runtime entrypoint: env checks, DB connection, HTTP server, Socket.IO.
+- Every feature has exactly one canonical backend code path — duplicate/legacy endpoints from earlier iterations were removed rather than left running alongside working ones.
 
-### 🛠️ Admins
-- Manage **doctors, lab staff, and receptionists**.  
-- View **hospital-wide analytics**: patients, emergencies, staff workload.  
-- Ensure **data security & compliance** (HIPAA/GDPR-ready).  
+## Known scope boundaries
 
----
-
-## 🧑‍🤝‍🧑 Features – Patient Side  
-
-### 🔑 Access
-- Multilingual **login & registration**.  
-- Works on **low internet or offline mode** (syncs when online).  
-
-### 📅 Appointments
-- Book, cancel, or reschedule appointments.  
-- View doctor availability.  
-
-### 📋 Medical Records
-- Access **past and current medical reports**.  
-- Download reports offline.  
-
-### 📢 Notifications
-- Reminders for **appointments**.  
-- Alerts for **medicine availability**.  
-- Notifications when **lab reports are uploaded**.  
-
-### 🚨 Emergency
-- Raise **emergency requests** directly from the app.  
-- Doctors & hospital staff get **instant alerts**.  
-
-### 📹 Video Consultation
-- Secure **telemedicine consultation** with doctors.    
-
-### 🧠 AI Symptom Checker
-- Patients enter symptoms → AI suggests:  
-  - Possible health issues.  
-  - Whether urgent consultation is needed.  
-
----
-
-## 🔄 Workflow  
-
-### Example: Regular Appointment  
-1. Patient books an appointment via mobile app.  
-2. Receptionist confirms and assigns doctor.  
-3. Doctor checks patient’s medical history.  
-4. Lab doctor uploads test results if needed.  
-5. Doctor prescribes medicines → Pharmacy stock updated.  
-6. Patient receives digital prescription + report on app.  
-
-### Example: Emergency Case  
-1. Patient marks condition as **Emergency**.  
-2. Doctor receives instant alert with patient details.  
-3. Admin logs emergency in system.  
-4. Doctor attends immediately (in-person or video call).  
-
----
-
-## ⚙️ Tech Stack  
-
-- **Frontend (Patient & Hospital App):** React Native + Expo  
-- **Backend (API):** Node.js + Express  
-- **Database:** MongoDB (Mongoose ODM)  
-- **Authentication:** JWT (role-based access control)  
-- **Real-time Notifications:** Socket.IO and Message  
-- **Telemedicine (Video Calling):** WebRTC + Daily.co API  
-- **Offline Support:** AsyncStorage + Service Workers (sync when online)  
-
-
+- The offline layer caches dashboard data and queues actions in IndexedDB; it is not a full installable PWA with app-shell precaching.
+- Multilingual support covers the patient-facing app (per the problem statement); staff-facing dashboards (Doctor/ASHA/Admin) are English-only.
+- The ambulance dispatch workflow is a request → match → assign → status-progression system; it does not integrate with physical vehicle GPS hardware.
+- Production hardening still needed before clinical deployment: HTTPS, encrypted backups, formal privacy/compliance review, TURN server for WebRTC across restrictive networks, and device testing on low-end rural hardware.

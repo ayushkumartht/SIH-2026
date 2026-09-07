@@ -1,15 +1,20 @@
 import React, { useEffect, useState } from "react";
-import mermaid from "mermaid";
 import PatientPortalDashboard from "./PatientDashboard";
 import LiveConsultation from "./LiveConsultation";
 import DoctorDashboard from "./DoctorDashboard";
+import AshaDashboard from "./AshaDashboard";
+import AdminDashboard from "./AdminDashboard";
 
 const API = (import.meta.env.VITE_API_URL || "http://localhost:3000").replace(
   /\/$/,
   "",
 );
-const demoPatient = { email: "patient@demo.local", password: "demo123" };
-const demoDoctor = { email: "doctor@demo.local", password: "demo123" };
+const seededAccounts = {
+  patient: { email: "patient@demo.local", password: "demo123" },
+  doctor: { email: "doctor@demo.local", password: "demo123" },
+  asha: { email: "asha@demo.local", password: "demo123" },
+  admin: { email: "admin@demo.local", password: "demo123" },
+};
 
 async function request(path, token, options = {}) {
   const response = await fetch(`${API}${path}`, {
@@ -26,6 +31,30 @@ async function request(path, token, options = {}) {
   return body.data ?? body;
 }
 
+let mermaidLoadPromise = null;
+function loadMermaid() {
+  if (!mermaidLoadPromise) {
+    mermaidLoadPromise = import("mermaid").then((mod) => {
+      const mermaid = mod.default;
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: "loose",
+        theme: "base",
+        themeVariables: {
+          primaryColor: "#e5f2e9",
+          primaryTextColor: "#102f31",
+          primaryBorderColor: "#0c6c56",
+          lineColor: "#669c88",
+          secondaryColor: "#eef6fa",
+          tertiaryColor: "#fff7e8",
+          fontFamily: "DM Sans",
+        },
+      });
+      return mermaid;
+    });
+  }
+  return mermaidLoadPromise;
+}
 function Link({ href, children, className = "" }) {
   return (
     <a className={className} href={href}>
@@ -47,7 +76,9 @@ function Header() {
         <a href="/#architecture">Architecture</a>
         <Link href="/docs">Documentation</Link>
         <Link href="/patient">Patient</Link>
+        <Link href="/asha">ASHA</Link>
         <Link href="/doctor">Doctor</Link>
+        <Link href="/admin">Admin</Link>
       </nav>
     </header>
   );
@@ -116,6 +147,9 @@ function Hero() {
           <Link href="/doctor" className="button button-outline">
             Doctor login
           </Link>
+          <Link href="/asha" className="button button-soft">
+            ASHA worker login
+          </Link>
         </div>
         <div className="trust-row">
           <span>● Low-bandwidth ready</span>
@@ -147,20 +181,6 @@ function MermaidFlow() {
   const ref = React.useRef(null);
   useEffect(() => {
     let active = true;
-    mermaid.initialize({
-      startOnLoad: false,
-      securityLevel: "loose",
-      theme: "base",
-      themeVariables: {
-        primaryColor: "#e5f2e9",
-        primaryTextColor: "#102f31",
-        primaryBorderColor: "#0c6c56",
-        lineColor: "#669c88",
-        secondaryColor: "#eef6fa",
-        tertiaryColor: "#fff7e8",
-        fontFamily: "DM Sans",
-      },
-    });
     const diagram = [
       "flowchart LR",
       "P[Patient / ASHA] --> I[Secure identity & consent]",
@@ -176,8 +196,8 @@ function MermaidFlow() {
       "D --> C[Clinical assessment]",
       "C --> R[Advice, prescription & follow-up]",
     ].join(String.fromCharCode(10));
-    mermaid
-      .render(`care-flow-${Date.now()}`, diagram)
+    loadMermaid()
+      .then((mermaid) => mermaid.render(`care-flow-${Date.now()}`, diagram))
       .then(({ svg }) => {
         if (active && ref.current) ref.current.innerHTML = svg;
       })
@@ -372,6 +392,9 @@ function Home() {
           <Link href="/doctor" className="button button-outline">
             I am a doctor
           </Link>
+          <Link href="/asha" className="button button-soft">
+            I am an ASHA worker
+          </Link>
         </div>
       </section>
     </Shell>
@@ -387,11 +410,12 @@ function Card({ label, title, children }) {
   );
 }
 
-function Auth({ role, onLogin }) {
-  const [mode, setMode] = useState(role === "patient" ? "login" : "login");
-  const [form, setForm] = useState(
-    role === "patient" ? { ...demoPatient } : { ...demoDoctor },
-  );
+function Auth({ role, allowedRoles, title, onLogin }) {
+  const isPatient = role === "patient";
+  const roles = allowedRoles || [role];
+  const seeded = seededAccounts[role];
+  const [mode, setMode] = useState("login");
+  const [form, setForm] = useState({ email: "", password: "" });
   const [error, setError] = useState("");
   const update = (event) =>
     setForm({ ...form, [event.target.name]: event.target.value });
@@ -400,7 +424,7 @@ function Auth({ role, onLogin }) {
     setError("");
     try {
       const path =
-        role === "patient"
+        isPatient
           ? mode === "signup"
             ? "/api/auth/patient/signup"
             : "/api/auth/patient/login"
@@ -409,8 +433,8 @@ function Auth({ role, onLogin }) {
         method: "POST",
         body: JSON.stringify(form),
       });
-      if (role === "doctor" && data.user.role !== "doctor")
-        throw new Error("This account is not a doctor account");
+      if (!isPatient && !roles.includes(data.user.role))
+        throw new Error(`This account is not a ${roles.join(" or ")} account`);
       onLogin(data);
     } catch (e) {
       setError(e.message);
@@ -419,13 +443,13 @@ function Auth({ role, onLogin }) {
   return (
     <section className="auth-card">
       <p className="kicker">SIH-2026 / {role} access</p>
-      <h1>{role === "patient" ? "Patient access" : "Doctor workspace"}</h1>
+      <h1>{title || (isPatient ? "Patient access" : role === "asha" ? "ASHA field desk" : "Doctor workspace")}</h1>
       <p className="muted">
-        {role === "patient"
+        {isPatient
           ? "Register or sign in to manage your care."
           : "Sign in to review your queue and consultations."}
       </p>
-      {role === "patient" && (
+      {isPatient && (
         <div className="tabs">
           <button
             className={mode === "login" ? "active" : ""}
@@ -493,12 +517,11 @@ function Auth({ role, onLogin }) {
         </Button>
       </form>
       {error && <p className="error">{error}</p>}
-      <p className="demo-note">
-        Demo:{" "}
-        {role === "patient"
-          ? `${demoPatient.email} / ${demoPatient.password}`
-          : `${demoDoctor.email} / ${demoDoctor.password}`}
-      </p>
+      {seeded && (
+        <p className="demo-note">
+          Seeded test account: {`${seeded.email} / ${seeded.password}`}
+        </p>
+      )}
     </section>
   );
 }
@@ -523,6 +546,25 @@ function Patient() {
           sessionStorage.setItem("patient-session", JSON.stringify(data));
           setSession(data);
         }}
+      />
+    </Shell>
+  );
+}
+function Asha() {
+  const [session, setSession] = useState(() => JSON.parse(sessionStorage.getItem("asha-session") || "null"));
+  return session ? <AshaDashboard session={session} onLogout={() => { sessionStorage.removeItem("asha-session"); setSession(null); }} /> : <Shell><Auth role="asha" onLogin={(data) => { sessionStorage.setItem("asha-session", JSON.stringify(data)); setSession(data); }} /></Shell>;
+}
+function Admin() {
+  const [session, setSession] = useState(() => JSON.parse(sessionStorage.getItem("admin-session") || "null"));
+  return session ? (
+    <AdminDashboard session={session} onLogout={() => { sessionStorage.removeItem("admin-session"); setSession(null); }} />
+  ) : (
+    <Shell>
+      <Auth
+        role="admin"
+        allowedRoles={["admin", "receptionist"]}
+        title="Admin / Receptionist console"
+        onLogin={(data) => { sessionStorage.setItem("admin-session", JSON.stringify(data)); setSession(data); }}
       />
     </Shell>
   );
@@ -765,8 +807,8 @@ function SystemDiagram() {
       "Q --> C",
       "API --> R[Consultation & appointment services]",
     ].join(String.fromCharCode(10));
-    mermaid
-      .render(`system-${Date.now()}`, diagram)
+    loadMermaid()
+      .then((mermaid) => mermaid.render(`system-${Date.now()}`, diagram))
       .then(({ svg }) => {
         if (active && ref.current) ref.current.innerHTML = svg;
       })
@@ -990,14 +1032,16 @@ function Docs() {
         </p>
         <h2>Run the demo</h2>
         <pre>
-          npm install{`\n`}npm run demo{`\n\n`}cd frontend{`\n`}npm install
+          npm install{`\n`}npm run seed{`\n`}npm run dev{`\n\n`}cd frontend{`\n`}npm install
           {`\n`}npm run dev
         </pre>
         <p>
-          Open the local Vite address (normally{" "}
-          <code>http://localhost:5173</code>). Demo accounts:{" "}
-          <code>patient@demo.local / demo123</code> and{" "}
-          <code>doctor@demo.local / demo123</code>.
+          Requires a running MongoDB instance (set <code>MONGO_URI</code> in{" "}
+          <code>.env</code>). Open the local Vite address (normally{" "}
+          <code>http://localhost:5173</code>). Seeded test accounts (password{" "}
+          <code>demo123</code> for all): <code>patient@demo.local</code>,{" "}
+          <code>doctor@demo.local</code>, <code>asha@demo.local</code>,{" "}
+          <code>admin@demo.local</code>.
         </p>
       </section>
     </Shell>
@@ -1006,7 +1050,9 @@ function Docs() {
 function App() {
   const path = window.location.pathname.replace(/\/$/, "");
   if (path === "/patient" || path.endsWith("/patient.html")) return <Patient />;
+  if (path === "/asha" || path.endsWith("/asha.html")) return <Asha />;
   if (path === "/doctor" || path.endsWith("/doctor.html")) return <Doctor />;
+  if (path === "/admin" || path.endsWith("/admin.html")) return <Admin />;
   if (path === "/docs" || path.endsWith("/docs.html")) return <Docs />;
   return <Home />;
 }

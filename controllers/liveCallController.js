@@ -1,6 +1,5 @@
 import Appointment from "../models/Appointment.js";
 import { v4 as uuidv4 } from "uuid";
-import { findDemoAppointmentById } from "../services/portalDemoStore.js";
 import {
   createCallRoom,
   findActiveRoomForAppointment,
@@ -26,7 +25,6 @@ function isParticipant(room, user) {
       : false;
 }
 async function appointmentById(id) {
-  if (process.env.DEMO_MODE === "true") return findDemoAppointmentById(id);
   return Appointment.findById(id);
 }
 

@@ -62,7 +62,7 @@ const getDoctorAndPatientFromParams = async (req, res, next) => {
         });
       }
       
-      if (patient.doctor.toString() !== doctorId) {
+      if (!patient.doctor || patient.doctor.toString() !== doctorId) {
         return res.status(403).json({
           success: false,
           error: {

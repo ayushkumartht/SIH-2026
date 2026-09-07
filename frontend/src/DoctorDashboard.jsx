@@ -182,6 +182,104 @@ function PatientCard({ patient, onViewMap, onSelect }) {
   );
 }
 
+// ─── Emergency Card ───────────────────────────────────────────────────────────
+const dispatchStatusLabel = {
+  pending: "Request received",
+  searching_ambulance: "Finding ambulance",
+  vehicle_assigned: "Ambulance assigned",
+  dispatched: "Dispatched",
+  en_route: "En route",
+  arrived: "Arrived",
+  at_hospital: "At hospital",
+  handed_over: "Handed over",
+  cancelled: "Cancelled",
+  closed: "Resolved",
+};
+function EmergencyCard({ emergency, token, onUpdated }) {
+  const [showMap, setShowMap] = useState(false);
+  const [note, setNote] = useState(emergency.doctorNote || "");
+  const [busy, setBusy] = useState(false);
+
+  async function acknowledge() {
+    setBusy(true);
+    try {
+      await api(`/api/emergencies/${emergency._id}/acknowledge`, token, {
+        method: "PUT",
+        body: JSON.stringify({ doctorNote: note }),
+      });
+      onUpdated();
+    } catch (e) {
+      alert(e.message);
+    }
+    setBusy(false);
+  }
+
+  async function resolve() {
+    setBusy(true);
+    try {
+      await api(`/api/emergencies/${emergency._id}/resolve`, token, { method: "PUT" });
+      onUpdated();
+    } catch (e) {
+      alert(e.message);
+    }
+    setBusy(false);
+  }
+
+  return (
+    <div className="dd-emergency-card">
+      <div className="dd-em-header">
+        <span className={`dd-em-badge dd-em-badge-${emergency.severity}`}>
+          {emergency.severity?.toUpperCase()} · {emergency.emergencyType}
+        </span>
+        <small>{new Date(emergency.createdAt).toLocaleString()}</small>
+      </div>
+      <h4>Patient: {emergency.patient?.name || "Unknown patient"}</h4>
+      <p><b>Details:</b> {emergency.details || "No additional details provided."}</p>
+      <p><b>Status:</b> {dispatchStatusLabel[emergency.dispatchStatus] || emergency.dispatchStatus}</p>
+      {emergency.assignedVehicle && (
+        <p>
+          <b>Ambulance:</b> {emergency.assignedVehicle.vehicleNumber}
+          {emergency.assignedVehicle.driver ? ` · ${emergency.assignedVehicle.driver.name} (${emergency.assignedVehicle.driver.phone})` : ""}
+        </p>
+      )}
+      <div className="dd-em-loc">
+        <span><b>GPS:</b> {emergency.latitude?.toFixed(5)}, {emergency.longitude?.toFixed(5)}</span>
+        <button className="dd-btn dd-btn-sm dd-btn-outline" onClick={() => setShowMap((v) => !v)}>
+          <Icons.MapPin /> {showMap ? "Hide map" : "View location"}
+        </button>
+      </div>
+      {showMap && (
+        <LeafletMap
+          markers={[{ lat: emergency.latitude, lng: emergency.longitude, popup: emergency.patient?.name || "Emergency location" }]}
+          center={[emergency.latitude, emergency.longitude]}
+          zoom={15}
+          height="240px"
+        />
+      )}
+      {!emergency.acknowledged && (
+        <div className="dd-em-actions">
+          <input
+            type="text"
+            placeholder="Optional note"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+          />
+          <button className="dd-btn dd-btn-primary" disabled={busy} onClick={acknowledge}>
+            Acknowledge
+          </button>
+        </div>
+      )}
+      {emergency.acknowledged && emergency.dispatchStatus !== "closed" && (
+        <div className="dd-em-actions">
+          <button className="dd-btn dd-btn-outline" disabled={busy} onClick={resolve}>
+            Mark resolved
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Patient Location Map Modal ───────────────────────────────────────────────
 function PatientLocationModal({ patient, consultation, token, onClose }) {
   const [location, setLocation] = useState(null);
@@ -275,7 +373,6 @@ export default function DoctorDashboard({ session, onLogout }) {
   const [selectedConsultation, setSelectedConsultation] = useState(null);
   const [formDiagnosis, setFormDiagnosis] = useState("");
   const [formPrescription, setFormPrescription] = useState("");
-  const [formVitals, setFormVitals] = useState({ temp: "", bp: "", hr: "", spo2: "" });
   const [formNotes, setFormNotes] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -355,10 +452,9 @@ export default function DoctorDashboard({ session, onLogout }) {
       await api(`/api/doctors/consultations/${selectedConsultation._id}`, token, {
         method: "PATCH",
         body: JSON.stringify({
-          diagnosis: formDiagnosis,
+          assessment: formDiagnosis,
           prescription: formPrescription,
-          vitals: formVitals,
-          notes: formNotes,
+          advice: formNotes,
           status: "completed",
         }),
       });
@@ -374,10 +470,9 @@ export default function DoctorDashboard({ session, onLogout }) {
 
   const handleOpenConsultation = (cons) => {
     setSelectedConsultation(cons);
-    setFormDiagnosis(cons.diagnosis || "");
+    setFormDiagnosis(cons.assessment || "");
     setFormPrescription(cons.prescription || "");
-    setFormVitals(cons.vitals || { temp: "", bp: "", hr: "", spo2: "" });
-    setFormNotes(cons.notes || "");
+    setFormNotes(cons.advice || "");
   };
 
   return (
@@ -610,44 +705,17 @@ export default function DoctorDashboard({ session, onLogout }) {
                     </button>
                   </div>
 
-                  <div className="dd-vitals-inputs">
-                    <label>
-                      Temp (°F)
-                      <input
-                        type="text"
-                        placeholder="98.6"
-                        value={formVitals.temp || ""}
-                        onChange={(e) => setFormVitals({ ...formVitals, temp: e.target.value })}
-                      />
-                    </label>
-                    <label>
-                      BP (mmHg)
-                      <input
-                        type="text"
-                        placeholder="120/80"
-                        value={formVitals.bp || ""}
-                        onChange={(e) => setFormVitals({ ...formVitals, bp: e.target.value })}
-                      />
-                    </label>
-                    <label>
-                      Pulse (BPM)
-                      <input
-                        type="text"
-                        placeholder="72"
-                        value={formVitals.hr || ""}
-                        onChange={(e) => setFormVitals({ ...formVitals, hr: e.target.value })}
-                      />
-                    </label>
-                    <label>
-                      SpO2 (%)
-                      <input
-                        type="text"
-                        placeholder="98"
-                        value={formVitals.spo2 || ""}
-                        onChange={(e) => setFormVitals({ ...formVitals, spo2: e.target.value })}
-                      />
-                    </label>
-                  </div>
+                  {(() => {
+                    const latestVitals = selectedConsultation.vitals?.[selectedConsultation.vitals.length - 1];
+                    return (
+                      <div className="dd-vitals-inputs">
+                        <span>Temp: {latestVitals?.temperatureC ? `${latestVitals.temperatureC}°C` : "—"}</span>
+                        <span>BP: {latestVitals ? `${latestVitals.systolicBp ?? "—"}/${latestVitals.diastolicBp ?? "—"}` : "—"}</span>
+                        <span>Pulse: {latestVitals?.heartRateBpm ? `${latestVitals.heartRateBpm} bpm` : "—"}</span>
+                        <span>SpO2: {latestVitals?.oxygenSaturationPercent ? `${latestVitals.oxygenSaturationPercent}%` : "—"}</span>
+                      </div>
+                    );
+                  })()}
 
                   <label className="dd-field-label">
                     Clinical Diagnosis
@@ -708,28 +776,15 @@ export default function DoctorDashboard({ session, onLogout }) {
             <div className="dd-emergencies-list">
               {emergencies.length ? (
                 emergencies.map((em) => (
-                  <div className="dd-emergency-card" key={em._id}>
-                    <div className="dd-em-header">
-                      <span className="dd-em-badge">CRITICAL EMERGENCY</span>
-                      <small>{new Date(em.createdAt).toLocaleString()}</small>
-                    </div>
-                    <h4>Patient: {em.patient?.name || "Unknown Patient"}</h4>
-                    <p><b>Description:</b> {em.description || "Urgent medical assistance requested."}</p>
-                    {em.location && (
-                      <div className="dd-em-loc">
-                        <span><b>GPS Coordinates:</b> {em.location.latitude}, {em.location.longitude}</span>
-                        <button
-                          className="dd-btn dd-btn-sm dd-btn-outline"
-                          onClick={() => setMapTarget({ patient: em.patient, consultation: null })}
-                        >
-                          <Icons.MapPin /> View Location
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                  <EmergencyCard
+                    key={em._id}
+                    emergency={em}
+                    token={token}
+                    onUpdated={loadData}
+                  />
                 ))
               ) : (
-                <div className="dd-empty">No active emergency alerts recorded.</div>
+                <div className="dd-empty">No active emergency alerts assigned to you.</div>
               )}
             </div>
           </div>

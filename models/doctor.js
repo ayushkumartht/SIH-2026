@@ -37,43 +37,14 @@ const doctorSchema = new mongoose.Schema(
       required: true,
     },
 
-    patients: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Patient",
-      },
-    ],
-
-    reports: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "LabReport",  
-      },
-    ],
-
-    calendar: [
-      {
-        date: {
-          type: Date,
-          required: true,
-        },
-        slots: [
-          {
-            time: { type: String, required: true }, 
-            status: {
-              type: String,
-              enum: ["free", "booked", "cancelled"],
-              default: "free",
-            },
-            patient: {
-              type: mongoose.Schema.Types.ObjectId,
-              ref: "Patient",
-              default: null,
-            },
-          },
-        ],
-      },
-    ],
+    shiftStart: {
+      type: String,
+      default: "09:00",
+    },
+    shiftEnd: {
+      type: String,
+      default: "17:00",
+    },
 
     emergencies: [
       {

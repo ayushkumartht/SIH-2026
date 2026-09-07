@@ -5,21 +5,12 @@ import Patient from "../models/patient.js";
 import LabReport from "../models/labReport.js";
 import PatientLocation from "../models/PatientLocation.js";
 import Hospital from "../models/Hospital.js";
-import { findCallRoom } from "../services/callRoomStore.js";
-import {
-  findConsultation,
-  saveConsultation,
-} from "../services/consultationStore.js";
+import Emergency from "../models/Emergency.js";
+import { tryLockAndBook } from "../services/appointmentService.js";
 import { recordConsultationAudit } from "../services/consultationAuditStore.js";
-import {
-  createDemoAppointment,
-  findDemoPatientById,
-  getDemoDoctor,
-  listDemoAppointments,
-  listDemoDoctors,
-  listDemoDoctorAppointments,
-} from "../services/portalDemoStore.js";
-import { listConsultations } from "../services/consultationStore.js";
+import { findConsultation } from "../services/consultationStore.js";
+import { findCallRoom } from "../services/callRoomStore.js";
+import { haversineKm } from "../utils/geo.js";
 
 const publicDoctor = (doctor) => ({
   id: doctor._id,
@@ -28,26 +19,12 @@ const publicDoctor = (doctor) => ({
   specialization: doctor.specialization,
   availability: doctor.availability,
   status: doctor.status,
-  calendar: doctor.calendar,
+  shiftStart: doctor.shiftStart,
+  shiftEnd: doctor.shiftEnd,
 });
 
 export async function getPatientProfile(req, res, next) {
   try {
-    if (process.env.DEMO_MODE === "true") {
-      const patient = findDemoPatientById(req.user.id);
-      if (!patient)
-        return res
-          .status(404)
-          .json({ success: false, error: "Patient not found" });
-      return res.json({
-        success: true,
-        data: {
-          ...patient,
-          password: undefined,
-          doctor: patient.doctor ? getDemoDoctor() : null,
-        },
-      });
-    }
     const patient = await Patient.findById(req.user.id).populate(
       "doctor",
       "name specialization email",
@@ -64,11 +41,6 @@ export async function getPatientProfile(req, res, next) {
 
 export async function listPortalDoctors(req, res, next) {
   try {
-    if (process.env.DEMO_MODE === "true")
-      return res.json({
-        success: true,
-        data: listDemoDoctors().map(publicDoctor),
-      });
     const filter = { status: { $ne: "on-leave" } };
     if (req.query.search)
       filter.$or = [
@@ -76,7 +48,7 @@ export async function listPortalDoctors(req, res, next) {
         { specialization: { $regex: req.query.search, $options: "i" } },
       ];
     const doctors = await Doctor.find(filter)
-      .select("name email specialization availability status calendar")
+      .select("name email specialization availability status shiftStart shiftEnd")
       .limit(50);
     res.json({ success: true, data: doctors.map(publicDoctor) });
   } catch (error) {
@@ -97,22 +69,6 @@ export async function createPatientAppointment(req, res, next) {
       return res
         .status(400)
         .json({ success: false, error: "Doctor, date, and time are required" });
-    if (process.env.DEMO_MODE === "true") {
-      if (String(doctorId) !== "demo-doctor")
-        return res
-          .status(404)
-          .json({ success: false, error: "Demo doctor not found" });
-      const appointment = createDemoAppointment({
-        patient: String(req.user.id),
-        doctorId: "demo-doctor",
-        date,
-        time,
-        reason,
-        appointmentType,
-        doctor: publicDoctor(getDemoDoctor()),
-      });
-      return res.status(201).json({ success: true, data: appointment });
-    }
     const [doctor, patient] = await Promise.all([
       Doctor.findById(doctorId),
       Patient.findById(req.user.id),
@@ -129,17 +85,22 @@ export async function createPatientAppointment(req, res, next) {
       patient.doctor = doctor._id;
       await patient.save();
     }
-    const appointment = await Appointment.create({
-      patient: patient._id,
-      doctorId: String(doctor._id),
-      date: new Date(date),
-      time,
-      reason,
-      appointmentType,
-      status: "confirmed",
-      bookingMode: "online",
-      createdAt: new Date(),
-    });
+    let appointment;
+    try {
+      appointment = await tryLockAndBook({
+        patient: patient._id,
+        doctorId: String(doctor._id),
+        date: new Date(date),
+        time,
+        appointmentType,
+      });
+    } catch (bookingError) {
+      return res
+        .status(409)
+        .json({ success: false, error: bookingError.message || "That slot is no longer available" });
+    }
+    appointment.reason = reason;
+    await appointment.save();
     res.status(201).json({ success: true, data: appointment });
   } catch (error) {
     next(error);
@@ -148,11 +109,6 @@ export async function createPatientAppointment(req, res, next) {
 
 export async function listPatientAppointments(req, res, next) {
   try {
-    if (process.env.DEMO_MODE === "true")
-      return res.json({
-        success: true,
-        data: listDemoAppointments(req.user.id),
-      });
     const appointments = await Appointment.find({ patient: req.user.id }).sort({
       date: 1,
       time: 1,
@@ -180,11 +136,6 @@ export async function listPatientAppointments(req, res, next) {
 
 export async function listPatientConsultations(req, res, next) {
   try {
-    if (process.env.DEMO_MODE === "true")
-      return res.json({
-        success: true,
-        data: listConsultations({ patientId: String(req.user.id) }),
-      });
     const consultations = await Consultation.find({
       patientId: String(req.user.id),
     }).sort({ createdAt: -1 });
@@ -196,8 +147,6 @@ export async function listPatientConsultations(req, res, next) {
 
 export async function listPatientReports(req, res, next) {
   try {
-    if (process.env.DEMO_MODE === "true")
-      return res.json({ success: true, data: [] });
     const reports = await LabReport.find({ patient: req.user.id })
       .select(
         "title content files uploadedBy uploadedByRole createdAt updatedAt",
@@ -254,17 +203,14 @@ export async function sharePatientLocation(req, res, next) {
       consentedAt: new Date(),
       expiresAt,
     };
-    const location =
-      process.env.DEMO_MODE === "true"
-        ? payload
-        : await PatientLocation.findOneAndUpdate(
-            {
-              consultationId: payload.consultationId,
-              patientId: payload.patientId,
-            },
-            payload,
-            { upsert: true, new: true, setDefaultsOnInsert: true },
-          );
+    const location = await PatientLocation.findOneAndUpdate(
+      {
+        consultationId: payload.consultationId,
+        patientId: payload.patientId,
+      },
+      payload,
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
     await recordConsultationAudit({
       consultationId,
       action: "location_shared",
@@ -294,22 +240,19 @@ export async function getDoctorCallCare(req, res, next) {
       return res
         .status(404)
         .json({ success: false, error: "Consultation not found" });
-    const [patient, reports, location] =
-      process.env.DEMO_MODE === "true"
-        ? [null, [], null]
-        : await Promise.all([
-            Patient.findById(call.patientId).select(
-              "name age gender contact history",
-            ),
-            LabReport.find({ patient: call.patientId })
-              .select("title content files createdAt uploadedByRole")
-              .sort({ createdAt: -1 }),
-            PatientLocation.findOne({
-              consultationId: String(consultation._id),
-              patientId: String(call.patientId),
-              expiresAt: { $gt: new Date() },
-            }).sort({ updatedAt: -1 }),
-          ]);
+    const [patient, reports, location] = await Promise.all([
+      Patient.findById(call.patientId).select(
+        "name age gender contact history",
+      ),
+      LabReport.find({ patient: call.patientId })
+        .select("title content files createdAt uploadedByRole")
+        .sort({ createdAt: -1 }),
+      PatientLocation.findOne({
+        consultationId: String(consultation._id),
+        patientId: String(call.patientId),
+        expiresAt: { $gt: new Date() },
+      }).sort({ updatedAt: -1 }),
+    ]);
     await recordConsultationAudit({
       consultationId: consultation._id,
       action: "doctor_viewed_call_care",
@@ -340,41 +283,34 @@ export async function getDoctorCallCare(req, res, next) {
 
 export async function getDoctorDashboard(req, res, next) {
   try {
-    if (process.env.DEMO_MODE === "true") {
-      const doctor = getDemoDoctor();
-      return res.json({
-        success: true,
-        data: {
-          doctor: publicDoctor(doctor),
-          patients: [],
-          appointments: listDemoDoctorAppointments(req.user.id),
-          consultations: listConsultations({ doctorId: String(req.user.id) }),
-        },
-      });
-    }
-    const doctor = await Doctor.findById(req.user.id).populate(
-      "patients",
-      "name email age gender contact history reports",
-    );
+    const doctor = await Doctor.findById(req.user.id).select("-password");
     if (!doctor)
       return res
         .status(404)
         .json({ success: false, error: "Doctor not found" });
-    const [appointments, consultations] = await Promise.all([
+    const [patients, appointments, consultations, emergencies] = await Promise.all([
+      Patient.find({ doctor: doctor._id }).select(
+        "name email age gender contact history reports",
+      ),
       Appointment.find({ doctorId: String(doctor._id) })
         .sort({ date: 1, time: 1 })
         .populate("patient", "name email age gender contact history"),
       Consultation.find({ doctorId: String(doctor._id) }).sort({
         createdAt: -1,
       }),
+      Emergency.find({ doctor: doctor._id, dispatchStatus: { $nin: ["closed", "cancelled"] } })
+        .populate("patient", "name age gender contact")
+        .populate({ path: "assignedVehicle", populate: { path: "driver" } })
+        .sort({ severity: -1, createdAt: -1 }),
     ]);
     res.json({
       success: true,
       data: {
         doctor: publicDoctor(doctor),
-        patients: doctor.patients,
+        patients,
         appointments,
         consultations,
+        emergencies,
       },
     });
   } catch (error) {
@@ -384,8 +320,6 @@ export async function getDoctorDashboard(req, res, next) {
 
 export async function getDoctorPatients(req, res, next) {
   try {
-    if (process.env.DEMO_MODE === "true")
-      return res.json({ success: true, data: [] });
     const patients = await Patient.find({ doctor: req.user.id })
       .select("name email age gender contact history reports createdAt")
       .sort({ name: 1 });
@@ -395,20 +329,6 @@ export async function getDoctorPatients(req, res, next) {
   }
 }
 
-// Haversine formula to calculate distance between two lat/lng points in km
-function haversineKm(lat1, lon1, lat2, lon2) {
-  const R = 6371;
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLon = ((lon2 - lon1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
 export async function getNearbyHospitals(req, res, next) {
   try {
     const lat = parseFloat(req.query.lat);
@@ -416,20 +336,6 @@ export async function getNearbyHospitals(req, res, next) {
     const radius = parseFloat(req.query.radius) || 30; // km
     if (!Number.isFinite(lat) || !Number.isFinite(lng))
       return res.status(400).json({ success: false, error: "lat and lng are required" });
-
-    if (process.env.DEMO_MODE === "true") {
-      // Return demo hospitals around the provided coordinates
-      const demoHospitals = [
-        { _id: "demo-h1", name: "District Hospital Nabha", type: "district", address: "Nabha, Punjab", city: "Nabha", contact: "01765-220000", latitude: lat + 0.01, longitude: lng + 0.01, beds: 200, facilities: ["Emergency", "ICU", "OT"], doctors: [] },
-        { _id: "demo-h2", name: "PHC Sanaur", type: "phc", address: "Sanaur, Patiala", city: "Sanaur", contact: "0175-2700001", latitude: lat - 0.02, longitude: lng + 0.015, beds: 30, facilities: ["OPD", "Maternity"], doctors: [] },
-        { _id: "demo-h3", name: "CHC Rajpura", type: "chc", address: "Rajpura, Punjab", city: "Rajpura", contact: "01762-234567", latitude: lat + 0.03, longitude: lng - 0.02, beds: 50, facilities: ["Emergency", "OPD", "Lab"], doctors: [] },
-      ];
-      const withDistance = demoHospitals.map((h) => ({
-        ...h,
-        distanceKm: haversineKm(lat, lng, h.latitude, h.longitude).toFixed(2),
-      }));
-      return res.json({ success: true, data: withDistance });
-    }
 
     const hospitals = await Hospital.find({ isActive: true })
       .populate("doctors", "name specialization status");
@@ -451,8 +357,6 @@ export async function getNearbyHospitals(req, res, next) {
 export async function getDoctorHospital(req, res, next) {
   try {
     const { doctorId } = req.params;
-    if (process.env.DEMO_MODE === "true")
-      return res.json({ success: true, data: null });
     const doctor = await Doctor.findById(doctorId)
       .populate("hospital")
       .select("name specialization hospital");
@@ -467,8 +371,6 @@ export async function getDoctorHospital(req, res, next) {
 export async function getPatientLocationForDoctor(req, res, next) {
   try {
     const { patientId, consultationId } = req.params;
-    if (process.env.DEMO_MODE === "true")
-      return res.json({ success: true, data: null });
     // Only the assigned doctor can view patient location
     const consultation = await Consultation.findById(consultationId);
     if (!consultation || String(consultation.doctorId) !== String(req.user.id))

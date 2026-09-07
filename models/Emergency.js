@@ -1,25 +1,5 @@
 import mongoose from "mongoose";
 
-const geoPointSchema = new mongoose.Schema(
-  {
-    type: {
-      type: String,
-      enum: ["Point"],
-      default: "Point",
-      required: true,
-    },
-    coordinates: {
-      type: [Number],
-      required: true,
-      validate: {
-        validator: (coordinates) => coordinates.length === 2,
-        message: "Coordinates must contain longitude and latitude",
-      },
-    },
-  },
-  { _id: false }
-);
-
 const emergencySchema = new mongoose.Schema(
   {
     patient: {
@@ -33,10 +13,12 @@ const emergencySchema = new mongoose.Schema(
     },
     reportedByRole: {
       type: String,
-      enum: ["patient", "asha"],
+      enum: ["patient", "asha", "doctor"],
+      required: true,
     },
     reportedBy: {
       type: mongoose.Schema.Types.ObjectId,
+      required: true,
     },
     emergencyType: {
       type: String,
@@ -48,20 +30,21 @@ const emergencySchema = new mongoose.Schema(
       enum: ["low", "medium", "high", "critical"],
       required: true,
     },
-    gpsLocation: {
-      type: geoPointSchema,
-      required: true,
+    latitude: { type: Number, required: true, min: -90, max: 90 },
+    longitude: { type: Number, required: true, min: -180, max: 180 },
+    title: {
+      type: String,
+      trim: true,
     },
-    pickupLocation: {
-      type: geoPointSchema,
-      required: true,
+    details: {
+      type: String,
+      default: "",
     },
     dispatchStatus: {
       type: String,
       enum: [
         "pending",
         "searching_ambulance",
-        "mobility_fallback",
         "vehicle_assigned",
         "dispatched",
         "en_route",
@@ -74,53 +57,26 @@ const emergencySchema = new mongoose.Schema(
       default: "pending",
       required: true,
     },
-    dispatchMode: {
-      type: String,
-      enum: ["ambulance", "verified_mobility_fallback"],
-    },
     assignedVehicle: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Ambulance",
-    },
-    assignedDriver: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Driver",
     },
     selectedHospital: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Hospital",
     },
-    eta: {
-      type: Date,
-    },
     etaMinutes: {
       type: Number,
       min: 0,
     },
-    ambulanceSearchStartedAt: Date,
-    mobilityFallbackVerifiedAt: Date,
     vehicleAssignedAt: Date,
     dispatchedAt: Date,
-    pickupAt: Date,
+    enRouteAt: Date,
     arrivedAt: Date,
-    hospitalMatchedAt: Date,
-    hospitalPreAlertedAt: Date,
+    atHospitalAt: Date,
     handoverAt: Date,
     closedAt: Date,
     cancelledAt: Date,
-    title: {
-      type: String,
-      trim: true,
-    },
-    details: {
-      type: String,
-      default: "",
-    },
-    priority: {
-      type: String,
-      enum: ["high", "medium", "low"],
-      default: "medium",
-    },
     doctorNote: {
       type: String,
       default: "",
@@ -135,8 +91,6 @@ const emergencySchema = new mongoose.Schema(
   }
 );
 
-emergencySchema.index({ gpsLocation: "2dsphere" });
-emergencySchema.index({ pickupLocation: "2dsphere" });
 emergencySchema.index({ dispatchStatus: 1, severity: 1, createdAt: -1 });
 
 const Emergency = mongoose.models.Emergency || mongoose.model("Emergency", emergencySchema);

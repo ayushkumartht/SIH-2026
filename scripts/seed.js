@@ -1,161 +1,309 @@
 import mongoose from "mongoose";
 import dotenv from "dotenv";
-import Patient from "../models/patient.js";
+import bcrypt from "bcryptjs";
+import Staff from "../models/Staff.js";
 import Doctor from "../models/doctor.js";
+import LabDoctor from "../models/LabDoctor.js";
+import Patient from "../models/patient.js";
 import Hospital from "../models/Hospital.js";
+import Ambulance from "../models/Ambulance.js";
+import Driver from "../models/Driver.js";
 import Appointment from "../models/Appointment.js";
 import Consultation from "../models/Consultation.js";
+import Emergency from "../models/Emergency.js";
+import Medicine from "../models/Medicine.js";
 
 dotenv.config();
 
 const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/nabhacare";
+const PASSWORD = "demo123";
+
+async function hash(password) {
+  return bcrypt.hash(password, 10);
+}
 
 async function seed() {
+  const credentials = [];
   try {
-    console.log(" Connecting to MongoDB at:", MONGO_URI);
+    console.log("Connecting to MongoDB at:", MONGO_URI);
     await mongoose.connect(MONGO_URI);
-    console.log(" MongoDB Connected!");
+    console.log("MongoDB connected.");
 
-    // Clear existing
     await Promise.all([
-      Patient.deleteMany({}),
+      Staff.deleteMany({}),
       Doctor.deleteMany({}),
+      LabDoctor.deleteMany({}),
+      Patient.deleteMany({}),
       Hospital.deleteMany({}),
+      Ambulance.deleteMany({}),
+      Driver.deleteMany({}),
       Appointment.deleteMany({}),
       Consultation.deleteMany({}),
+      Emergency.deleteMany({}),
+      Medicine.deleteMany({}),
     ]);
-    console.log(" Cleared existing database records.");
+    console.log("Cleared existing collections.");
 
-    // Create Hospitals
+    // --- Hospitals ---
     const hospitals = await Hospital.create([
       {
         name: "Civil Hospital Nabha",
-        address: "Hospital Road, Nabha, Punjab 147201",
+        address: "Hospital Road, Nabha",
+        city: "Nabha",
+        state: "Punjab",
+        pincode: "147201",
         contact: "+91 1765 220123",
-        emergencyContact: "+91 1765 220999",
+        type: "district",
         latitude: 30.3753,
-        longitude: 76.7821,
-        availableBeds: 42,
+        longitude: 76.1500,
+        beds: 42,
         facilities: ["Emergency 24/7", "ICU", "Teleconsultation Hub", "Maternity"],
-        connectedDoctorsCount: 8,
       },
       {
-        name: "Community Health Centre (CHC) Bhadson",
-        address: "Bhadson Road, Near Bus Stand, Punjab 147202",
+        name: "Community Health Centre Bhadson",
+        address: "Bhadson Road, Near Bus Stand",
+        city: "Bhadson",
+        state: "Punjab",
+        pincode: "147202",
         contact: "+91 1765 240456",
-        emergencyContact: "+91 1765 240911",
-        latitude: 30.412,
-        longitude: 76.815,
-        availableBeds: 18,
+        type: "chc",
+        latitude: 30.4120,
+        longitude: 76.1850,
+        beds: 18,
         facilities: ["General Medicine", "Pediatrics", "ASHA Desk"],
-        connectedDoctorsCount: 4,
       },
       {
         name: "Sub-Divisional Hospital Rajpura",
-        address: "GT Road, Rajpura, Punjab 140401",
+        address: "GT Road, Rajpura",
+        city: "Rajpura",
+        state: "Punjab",
+        pincode: "140401",
         contact: "+91 1762 225678",
-        emergencyContact: "+91 1762 225911",
-        latitude: 30.484,
-        longitude: 76.594,
-        availableBeds: 60,
+        type: "sub-district",
+        latitude: 30.4840,
+        longitude: 76.5940,
+        beds: 60,
         facilities: ["Trauma Care", "Dialysis", "Radiology", "Tele-ICU"],
-        connectedDoctorsCount: 12,
       },
     ]);
 
-    // Create Doctors
+    // --- Doctors ---
     const doctors = await Doctor.create([
       {
         name: "Dr. Amandeep Singh",
         email: "doctor@demo.local",
-        password: "demo123",
+        mobile: "9876543210",
+        password: await hash(PASSWORD),
         specialization: "General Physician",
-        qualification: "MBBS, MD (General Medicine)",
-        registrationNo: "PMC-45892",
-        phone: "+91 98765 43210",
-        hospitalId: hospitals[0]._id,
-        isOnline: true,
+        availability: true,
+        status: "active",
+        shiftStart: "09:00",
+        shiftEnd: "17:00",
+        hospital: hospitals[0]._id,
       },
       {
         name: "Dr. Sunita Sharma",
         email: "sunita@nabhacare.gov.in",
-        password: "demo123",
+        mobile: "9876511223",
+        password: await hash(PASSWORD),
         specialization: "Pediatrics & Maternal Care",
-        qualification: "MBBS, DCH",
-        registrationNo: "PMC-38104",
-        phone: "+91 98765 11223",
-        hospitalId: hospitals[0]._id,
-        isOnline: true,
+        availability: true,
+        status: "active",
+        shiftStart: "10:00",
+        shiftEnd: "18:00",
+        hospital: hospitals[0]._id,
       },
       {
         name: "Dr. Rajesh Kumar",
         email: "rajesh@nabhacare.gov.in",
-        password: "demo123",
+        mobile: "9812345678",
+        password: await hash(PASSWORD),
         specialization: "Cardiology Specialist",
-        qualification: "MBBS, MD, DM (Cardiology)",
-        registrationNo: "PMC-51209",
-        phone: "+91 98123 45678",
-        hospitalId: hospitals[2]._id,
-        isOnline: false,
+        availability: true,
+        status: "active",
+        shiftStart: "09:00",
+        shiftEnd: "15:00",
+        hospital: hospitals[2]._id,
       },
     ]);
+    await Hospital.findByIdAndUpdate(hospitals[0]._id, { $push: { doctors: { $each: [doctors[0]._id, doctors[1]._id] } } });
+    await Hospital.findByIdAndUpdate(hospitals[2]._id, { $push: { doctors: doctors[2]._id } });
 
-    // Create Patients
+    // --- Lab doctor ---
+    const labDoctor = await LabDoctor.create({
+      name: "Dr. Kiran Bedi",
+      email: "lab@demo.local",
+      mobile: "9812399887",
+      password: await hash(PASSWORD),
+      specialization: "Pathology",
+    });
+
+    // --- Staff: admin, receptionist, ASHA workers ---
+    const admin = await Staff.create({
+      name: "Admin User",
+      email: "admin@demo.local",
+      password: await hash(PASSWORD),
+      role: "admin",
+    });
+    const receptionist = await Staff.create({
+      name: "Receptionist Desk",
+      email: "receptionist@demo.local",
+      password: await hash(PASSWORD),
+      role: "receptionist",
+    });
+    const asha = await Staff.create({
+      name: "Muskan Gupta",
+      email: "asha@demo.local",
+      password: await hash(PASSWORD),
+      role: "asha",
+    });
+
+    // --- Patients ---
     const patients = await Patient.create([
       {
         name: "Gurpreet Kaur",
         email: "patient@demo.local",
-        password: "demo123",
+        password: await hash(PASSWORD),
         age: 34,
         gender: "female",
-        contact: "+91 99887 76655",
-        address: "Village Alhoran, Nabha",
-        medicalHistory: "Type 2 Diabetes, Mild Hypertension",
+        contact: "9988776655",
+        village: "Alhoran, Nabha",
+        history: "Type 2 Diabetes, Mild Hypertension",
+        doctor: doctors[0]._id,
       },
       {
         name: "Harjeet Singh",
         email: "harjeet@demo.local",
-        password: "demo123",
+        password: await hash(PASSWORD),
         age: 52,
         gender: "male",
-        contact: "+91 98111 22334",
-        address: "Main Market, Bhadson",
-        medicalHistory: "Asthma, Seasonal Allergies",
+        contact: "9811122334",
+        village: "Main Market, Bhadson",
+        history: "Asthma, Seasonal Allergies",
+        doctor: doctors[1]._id,
+      },
+      {
+        name: "Simran Kaur",
+        age: 28,
+        gender: "female",
+        contact: "9900011223",
+        village: "Sanaur",
+        history: "First ANC visit",
+        createdByAsha: String(asha._id),
       },
     ]);
 
-    // Create Appointments & Consultations
+    // --- Ambulances + drivers ---
+    const drivers = await Driver.create([
+      { name: "Balwinder Singh", phone: "9855511111", licenseNo: "PB-DL-001" },
+      { name: "Manpreet Kaur", phone: "9855522222", licenseNo: "PB-DL-002" },
+    ]);
+    await Ambulance.create([
+      {
+        vehicleNumber: "PB-11-AB-1234",
+        type: "advanced_life_support",
+        hospitalId: hospitals[0]._id,
+        driver: drivers[0]._id,
+        capacity: 2,
+        currentLocation: { latitude: 30.3760, longitude: 76.1510 },
+        status: "available",
+      },
+      {
+        vehicleNumber: "PB-11-CD-5678",
+        type: "basic",
+        hospitalId: hospitals[1]._id,
+        driver: drivers[1]._id,
+        capacity: 1,
+        currentLocation: { latitude: 30.4110, longitude: 76.1840 },
+        status: "available",
+      },
+    ]);
+
+    // --- Sample appointment + consultation ---
     const appointment = await Appointment.create({
       patient: patients[0]._id,
-      doctor: doctors[0]._id,
+      doctorId: String(doctors[0]._id),
       date: new Date(),
-      time: "10:30 AM",
+      time: "10:30",
       reason: "High fever and persistent cough for 3 days",
-      status: "pending",
       appointmentType: "video",
-      roomId: `room-${Date.now()}`,
+      status: "confirmed",
+      bookingMode: "online",
+      createdAt: new Date(),
     });
 
     await Consultation.create({
-      appointment: appointment._id,
-      patient: patients[0]._id,
-      doctor: doctors[0]._id,
-      vitals: { temp: "101.2 °F", bp: "130/85", hr: "88 bpm", spo2: "97%" },
-      diagnosis: "Acute Upper Respiratory Tract Infection",
-      prescription: "Tab. Paracetamol 650mg TDS, Cap. Amoxicillin 500mg BD x 5 days",
-      notes: "Advised steam inhalation, rest, and plenty of warm fluids.",
+      patientId: String(patients[0]._id),
+      doctorId: String(doctors[0]._id),
+      appointmentId: appointment._id,
       status: "completed",
+      consent: { granted: true, grantedAt: new Date(), grantedBy: String(patients[0]._id) },
+      symptoms: "High fever and persistent cough for 3 days",
+      vitals: [{
+        temperatureC: 38.4,
+        heartRateBpm: 88,
+        systolicBp: 130,
+        diastolicBp: 85,
+        oxygenSaturationPercent: 97,
+        source: "doctor",
+        recordedBy: String(doctors[0]._id),
+      }],
+      assessment: "Acute upper respiratory tract infection",
+      outcome: "not_urgent",
+      prescription: "Tab. Paracetamol 650mg TDS, Cap. Amoxicillin 500mg BD x 5 days",
+      advice: "Advised steam inhalation, rest, and plenty of warm fluids.",
+      startedAt: new Date(),
+      completedAt: new Date(),
     });
 
-    console.log(" Seed complete! Created:");
-    console.log(`   - ${hospitals.length} Hospitals`);
-    console.log(`   - ${doctors.length} Doctors (Demo: doctor@demo.local / demo123)`);
-    console.log(`   - ${patients.length} Patients (Demo: patient@demo.local / demo123)`);
-    console.log(`   - 1 Sample Appointment & Consultation record`);
+    // --- Sample resolved emergency ---
+    await Emergency.create({
+      patient: patients[1]._id,
+      doctor: doctors[2]._id,
+      reportedByRole: "patient",
+      reportedBy: patients[1]._id,
+      emergencyType: "medical",
+      severity: "high",
+      latitude: 30.4838,
+      longitude: 76.5945,
+      title: "Chest pain",
+      details: "Sudden chest pain and breathlessness",
+      dispatchStatus: "closed",
+      acknowledged: true,
+      doctorNote: "Referred to cardiology, stabilized on arrival.",
+      closedAt: new Date(),
+    });
+
+    // --- Pharmacy stock ---
+    await Medicine.create([
+      { name: "Paracetamol 650mg", hospital: hospitals[0]._id, category: "Analgesic", unit: "tablets", stockQuantity: 480, lowStockThreshold: 50 },
+      { name: "Amoxicillin 500mg", hospital: hospitals[0]._id, category: "Antibiotic", unit: "capsules", stockQuantity: 15, lowStockThreshold: 50 },
+      { name: "ORS Sachets", hospital: hospitals[0]._id, category: "Rehydration", unit: "sachets", stockQuantity: 200, lowStockThreshold: 30 },
+      { name: "Insulin (Human)", hospital: hospitals[1]._id, category: "Diabetes", unit: "vials", stockQuantity: 0, lowStockThreshold: 10 },
+      { name: "Paracetamol 650mg", hospital: hospitals[2]._id, category: "Analgesic", unit: "tablets", stockQuantity: 120, lowStockThreshold: 50 },
+    ]);
+
+    credentials.push(
+      { role: "admin", email: admin.email, password: PASSWORD },
+      { role: "receptionist", email: receptionist.email, password: PASSWORD },
+      { role: "doctor", email: doctors[0].email, password: PASSWORD },
+      { role: "doctor", email: doctors[1].email, password: PASSWORD },
+      { role: "doctor", email: doctors[2].email, password: PASSWORD },
+      { role: "lab", email: labDoctor.email, password: PASSWORD },
+      { role: "asha", email: asha.email, password: PASSWORD },
+      { role: "patient", email: patients[0].email, password: PASSWORD },
+      { role: "patient", email: patients[1].email, password: PASSWORD },
+    );
+
+    console.log("\nSeed complete. Seeded test accounts:\n");
+    for (const c of credentials) {
+      console.log(`  ${c.role.padEnd(12)} ${c.email.padEnd(28)} ${c.password}`);
+    }
+    console.log(`\n  ${hospitals.length} hospitals, ${doctors.length} doctors, ${patients.length} patients, 2 ambulances, 5 medicine stock records, 1 appointment, 1 consultation, 1 emergency.\n`);
 
     process.exit(0);
   } catch (err) {
-    console.error(" Seed failed:", err);
+    console.error("Seed failed:", err);
     process.exit(1);
   }
 }

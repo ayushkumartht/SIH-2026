@@ -5,6 +5,6 @@ export const signupValidation = [
   body('email').optional({ nullable: true }).isEmail().withMessage('Valid email is required for staff'),
   body('password').optional({ nullable: true }).isString().isLength({ min: 6 }).withMessage('Password must be at least 6 characters long'),
   body('mobile').optional({ nullable: true }).isString().withMessage('Mobile is required for doctors and lab doctors'),
-  body('role').isIn(['admin', 'receptionist', 'doctor', 'lab']).withMessage('Role must be either admin, receptionist, doctor, or lab'),
+  body('role').isIn(['admin', 'receptionist', 'doctor', 'lab', 'asha']).withMessage('Role must be one of admin, receptionist, doctor, lab, or asha'),
   body('specialization').optional({ nullable: true }).isString().withMessage('Specialization must be a string')
 ];

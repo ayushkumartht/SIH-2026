@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import LiveConsultation from "./LiveConsultation";
+import { saveSnapshot, loadSnapshot, queueRequest, flushQueue } from "./offlineCache";
 
 // ─── LeafletMap component (used in hospitals tab + location sharing) ───────────
 function LeafletMap({ markers = [], center, zoom = 13, height = "380px", onHospitalClick }) {
@@ -70,8 +71,25 @@ const labels = {
     consultations: "My consultations",
     prescriptions: "Prescriptions",
     reports: "Reports",
+    hospitals: "Hospitals & Map",
+    medicines: "Medicine availability",
+    emergency: "Emergency",
     profile: "Profile",
     help: "Help",
+    welcome: "Hello",
+    welcomeSub: "Start a new consultation or continue your existing care journey.",
+    startCta: "Start consultation",
+    careStatus: "Care status",
+    signOut: "Sign out",
+    findDoctor: "Find a doctor",
+    upcomingCare: "Upcoming care",
+    recentCare: "Recent care",
+    notifications: "Notifications",
+    viewAll: "View all",
+    save: "Save",
+    cancel: "Cancel",
+    close: "Close",
+    loading: "Loading your care dashboard…",
   },
   Hindi: {
     home: "होम",
@@ -79,8 +97,25 @@ const labels = {
     consultations: "मेरे परामर्श",
     prescriptions: "दवाइयाँ",
     reports: "रिपोर्ट",
+    hospitals: "अस्पताल और नक्शा",
+    medicines: "दवा उपलब्धता",
+    emergency: "आपातकाल",
     profile: "प्रोफ़ाइल",
     help: "सहायता",
+    welcome: "नमस्ते",
+    welcomeSub: "नया परामर्श शुरू करें या अपनी देखभाल यात्रा जारी रखें।",
+    startCta: "परामर्श शुरू करें",
+    careStatus: "देखभाल की स्थिति",
+    signOut: "साइन आउट करें",
+    findDoctor: "डॉक्टर खोजें",
+    upcomingCare: "आगामी देखभाल",
+    recentCare: "हाल की देखभाल",
+    notifications: "सूचनाएं",
+    viewAll: "सभी देखें",
+    save: "सहेजें",
+    cancel: "रद्द करें",
+    close: "बंद करें",
+    loading: "आपका देखभाल डैशबोर्ड लोड हो रहा है…",
   },
   Punjabi: {
     home: "ਹੋਮ",
@@ -88,8 +123,25 @@ const labels = {
     consultations: "ਮੇਰੀਆਂ ਸਲਾਹਾਂ",
     prescriptions: "ਦਵਾਈਆਂ",
     reports: "ਰਿਪੋਰਟਾਂ",
+    hospitals: "ਹਸਪਤਾਲ ਅਤੇ ਨਕਸ਼ਾ",
+    medicines: "ਦਵਾਈ ਉਪਲਬਧਤਾ",
+    emergency: "ਐਮਰਜੈਂਸੀ",
     profile: "ਪ੍ਰੋਫ਼ਾਈਲ",
     help: "ਮਦਦ",
+    welcome: "ਸਤ ਸ੍ਰੀ ਅਕਾਲ",
+    welcomeSub: "ਨਵੀਂ ਸਲਾਹ ਸ਼ੁਰੂ ਕਰੋ ਜਾਂ ਆਪਣੀ ਦੇਖਭਾਲ ਯਾਤਰਾ ਜਾਰੀ ਰੱਖੋ।",
+    startCta: "ਸਲਾਹ ਸ਼ੁਰੂ ਕਰੋ",
+    careStatus: "ਦੇਖਭਾਲ ਸਥਿਤੀ",
+    signOut: "ਸਾਈਨ ਆਊਟ",
+    findDoctor: "ਡਾਕਟਰ ਲੱਭੋ",
+    upcomingCare: "ਆਉਣ ਵਾਲੀ ਦੇਖਭਾਲ",
+    recentCare: "ਹਾਲੀਆ ਦੇਖਭਾਲ",
+    notifications: "ਸੂਚਨਾਵਾਂ",
+    viewAll: "ਸਭ ਵੇਖੋ",
+    save: "ਸੰਭਾਲੋ",
+    cancel: "ਰੱਦ ਕਰੋ",
+    close: "ਬੰਦ ਕਰੋ",
+    loading: "ਤੁਹਾਡਾ ਦੇਖਭਾਲ ਡੈਸ਼ਬੋਰਡ ਲੋਡ ਹੋ ਰਿਹਾ ਹੈ…",
   },
 };
 async function api(path, token, options = {}) {
@@ -119,6 +171,56 @@ function statusText(status) {
     }[status] || "Scheduled"
   );
 }
+// Rule-based symptom triage. Intentionally simple and transparent — not an AI
+// diagnosis, just a red-flag keyword screen to help patients decide urgency.
+const RED_FLAG_SYMPTOMS = [
+  "chest pain", "difficulty breathing", "shortness of breath", "unconscious",
+  "unresponsive", "seizure", "fits", "severe bleeding", "heavy bleeding",
+  "blue lips", "can't breathe", "cannot breathe", "paralysis", "stroke",
+  "severe head injury", "coughing blood", "vomiting blood", "suicidal",
+];
+const URGENT_SYMPTOMS = [
+  "high fever", "persistent vomiting", "severe pain", "dehydration",
+  "severe abdominal pain", "labour", "labor pain", "bleeding during pregnancy",
+  "diabetic", "blood sugar",
+];
+function checkSymptoms(text) {
+  const lower = text.toLowerCase();
+  if (RED_FLAG_SYMPTOMS.some((s) => lower.includes(s))) {
+    return {
+      level: "emergency",
+      label: "Seek emergency care now",
+      advice: "These symptoms can be life-threatening. Use the SOS button to raise an emergency immediately, or go to the nearest hospital.",
+    };
+  }
+  if (URGENT_SYMPTOMS.some((s) => lower.includes(s))) {
+    return {
+      level: "urgent",
+      label: "See a doctor today",
+      advice: "Book a consultation as soon as possible. If symptoms worsen suddenly, raise an SOS instead.",
+    };
+  }
+  if (lower.trim().length === 0) {
+    return null;
+  }
+  return {
+    level: "routine",
+    label: "Routine consultation advised",
+    advice: "These symptoms don't match urgent warning signs, but a doctor's consultation is still recommended if they persist or worsen.",
+  };
+}
+const dispatchStatusText = {
+  pending: "Request received",
+  searching_ambulance: "Finding nearest ambulance",
+  vehicle_assigned: "Ambulance assigned",
+  dispatched: "Ambulance dispatched",
+  en_route: "Ambulance en route",
+  arrived: "Ambulance arrived",
+  at_hospital: "At hospital",
+  handed_over: "Handed over to hospital",
+  cancelled: "Cancelled",
+  closed: "Resolved",
+};
 
 export default function PatientDashboard({ session, onLogout }) {
   const [tab, setTab] = useState("home");
@@ -145,10 +247,22 @@ export default function PatientDashboard({ session, onLogout }) {
   const [hospitalsLoading, setHospitalsLoading] = useState(false);
   const [selectedHospital, setSelectedHospital] = useState(null);
   const [userCoords, setUserCoords] = useState(null);
+  const [emergencies, setEmergencies] = useState([]);
+  const [sosOpen, setSosOpen] = useState(false);
+  const [sosLoading, setSosLoading] = useState(false);
+  const [symptomCheckerOpen, setSymptomCheckerOpen] = useState(false);
   const t = labels[language];
   const unread = notifications.filter((item) => !item.read).length;
   async function load() {
     setError("");
+    if (!navigator.onLine) {
+      const cached = await loadSnapshot("patient-dashboard");
+      if (cached) {
+        setData(cached.data);
+        setMessage(`Showing saved records from ${new Date(cached.savedAt).toLocaleString()} — you're offline.`);
+        return;
+      }
+    }
     try {
       const [profile, doctors, appointments, consultations] = await Promise.all(
         [
@@ -158,18 +272,76 @@ export default function PatientDashboard({ session, onLogout }) {
           "/api/portal/patient/consultations",
         ].map((path) => api(path, session.token)),
       );
-      setData({ profile, doctors, appointments, consultations });
+      const fresh = { profile, doctors, appointments, consultations };
+      setData(fresh);
+      saveSnapshot("patient-dashboard", fresh);
     } catch (err) {
       if (/token|unauthor|expired/i.test(err.message)) {
         onLogout();
         return;
       }
-      setError(err.message);
+      const cached = await loadSnapshot("patient-dashboard");
+      if (cached) {
+        setData(cached.data);
+        setMessage(`Could not reach the server — showing saved records from ${new Date(cached.savedAt).toLocaleString()}.`);
+      } else {
+        setError(err.message);
+      }
     }
+    loadEmergencies();
+  }
+  async function syncOfflineQueue() {
+    const results = await flushQueue(async (item) => {
+      await api(item.path, session.token, { method: item.method, body: JSON.stringify(item.body) });
+    });
+    const succeeded = results.filter((r) => r.ok).length;
+    if (succeeded > 0) {
+      setMessage(`Synced ${succeeded} request${succeeded > 1 ? "s" : ""} saved while you were offline.`);
+      load();
+    }
+  }
+  async function loadEmergencies() {
+    try {
+      setEmergencies(await api("/api/emergencies", session.token));
+    } catch {
+      // non-fatal — emergency history is supplementary to the main dashboard
+    }
+  }
+  async function raiseEmergency({ emergencyType, severity, details }) {
+    if (!navigator.geolocation) {
+      setMessage("Location is required to raise an emergency on this device.");
+      return;
+    }
+    setSosLoading(true);
+    try {
+      const pos = await new Promise((resolve, reject) =>
+        navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000, enableHighAccuracy: true }),
+      );
+      await api("/api/emergencies", session.token, {
+        method: "POST",
+        body: JSON.stringify({
+          emergencyType,
+          severity,
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          title: `${severity.toUpperCase()} emergency`,
+          details,
+        }),
+      });
+      setSosOpen(false);
+      setMessage("Emergency raised. Help has been alerted with your location.");
+      loadEmergencies();
+    } catch (err) {
+      setMessage("Could not raise emergency: " + (err.message || "Location permission denied"));
+    }
+    setSosLoading(false);
   }
   useEffect(() => {
     load();
-    const online = () => setOffline(false);
+    const online = () => {
+      setOffline(false);
+      syncOfflineQueue();
+    };
     const offlineEvent = () => setOffline(true);
     window.addEventListener("online", online);
     window.addEventListener("offline", offlineEvent);
@@ -202,16 +374,23 @@ export default function PatientDashboard({ session, onLogout }) {
       setFlow({ ...flow, step: 1 });
       return;
     }
+    const payload = {
+      doctorId: flow.doctor.id,
+      date: new Date().toISOString().slice(0, 10),
+      time: "10:30",
+      reason: flow.symptoms,
+      appointmentType: flow.network === "audio_only" ? "audio" : "video",
+    };
+    if (!navigator.onLine) {
+      await queueRequest({ path: "/api/portal/patient/appointments", method: "POST", body: payload });
+      setMessage("You're offline — your booking request has been saved and will be sent automatically once you're back online.");
+      setFlow(null);
+      return;
+    }
     try {
       await api("/api/portal/patient/appointments", session.token, {
         method: "POST",
-        body: JSON.stringify({
-          doctorId: flow.doctor.id,
-          date: new Date().toISOString().slice(0, 10),
-          time: "10:30",
-          reason: flow.symptoms,
-          appointmentType: flow.network === "audio_only" ? "audio" : "video",
-        }),
+        body: JSON.stringify(payload),
       });
       setMessage(
         "Your consultation request has been added to the doctor queue.",
@@ -231,7 +410,7 @@ export default function PatientDashboard({ session, onLogout }) {
     }
   }
   if (!data && !error)
-    return <div className="patient-loading">Loading your care dashboard…</div>;
+    return <div className="patient-loading">{t.loading}</div>;
   if (error)
     return (
       <div className="patient-loading">
@@ -241,7 +420,7 @@ export default function PatientDashboard({ session, onLogout }) {
           Try again
         </button>
         <button className="button button-outline" onClick={onLogout}>
-          Sign out
+          {t.signOut}
         </button>
       </div>
     );
@@ -251,7 +430,9 @@ export default function PatientDashboard({ session, onLogout }) {
     ["consultations", t.consultations],
     ["prescriptions", t.prescriptions],
     ["reports", t.reports],
-    ["hospitals", "Hospitals & Map"],
+    ["hospitals", t.hospitals],
+    ["medicines", t.medicines],
+    ["emergency", t.emergency],
     ["profile", t.profile],
     ["help", t.help],
   ];
@@ -341,10 +522,13 @@ export default function PatientDashboard({ session, onLogout }) {
             }}
             aria-label={`${unread} unread notifications`}
           >
-            Notifications ({unread})
+            {t.notifications} ({unread})
+          </button>
+          <button className="button button-sos" onClick={() => setSosOpen(true)}>
+            ⚠ SOS
           </button>
           <button className="button button-dark" onClick={onLogout}>
-            Sign out
+            {t.signOut}
           </button>
         </div>
       </header>
@@ -379,6 +563,7 @@ export default function PatientDashboard({ session, onLogout }) {
           )}
           {tab === "home" && (
             <HomeView
+              t={t}
               profile={data.profile}
               upcoming={upcoming}
               consultations={data.consultations}
@@ -399,7 +584,7 @@ export default function PatientDashboard({ session, onLogout }) {
             />
           )}
           {tab === "prescriptions" && (
-            <PrescriptionsView consultations={data.consultations} />
+            <PrescriptionsView consultations={data.consultations} doctors={data.doctors} profile={data.profile} />
           )}
           {tab === "reports" && <ReportsView />}
           {tab === "profile" && (
@@ -431,9 +616,29 @@ export default function PatientDashboard({ session, onLogout }) {
               onMessage={setMessage}
             />
           )}
-          {tab === "help" && <HelpView onStart={() => openFlow()} />}
+          {tab === "medicines" && <MedicinesView session={session} onMessage={setMessage} />}
+          {tab === "emergency" && (
+            <EmergencyView emergencies={emergencies} onRaise={() => setSosOpen(true)} />
+          )}
+          {tab === "help" && (
+            <HelpView
+              onStart={() => openFlow()}
+              onSos={() => setSosOpen(true)}
+              onSymptomChecker={() => setSymptomCheckerOpen(true)}
+            />
+          )}
         </main>
       </div>
+      {sosOpen && (
+        <SosModal
+          loading={sosLoading}
+          onCancel={() => setSosOpen(false)}
+          onSubmit={raiseEmergency}
+        />
+      )}
+      {symptomCheckerOpen && (
+        <SymptomCheckerModal onClose={() => setSymptomCheckerOpen(false)} onSos={() => { setSymptomCheckerOpen(false); setSosOpen(true); }} onStart={() => { setSymptomCheckerOpen(false); openFlow(); }} />
+      )}
       {flow && (
         <ConsultationFlow
           flow={flow}
@@ -468,6 +673,7 @@ export default function PatientDashboard({ session, onLogout }) {
 }
 
 function HomeView({
+  t,
   profile,
   upcoming,
   consultations,
@@ -481,16 +687,14 @@ function HomeView({
       <section className="patient-welcome">
         <div>
           <p className="kicker">Your care dashboard</p>
-          <h1>Hello, {profile.name?.split(" ")[0] || "there"}.</h1>
-          <p>
-            Start a new consultation or continue your existing care journey.
-          </p>
+          <h1>{t.welcome}, {profile.name?.split(" ")[0] || "there"}.</h1>
+          <p>{t.welcomeSub}</p>
           <button className="button button-green" onClick={onStart}>
-            Start consultation →
+            {t.startCta} →
           </button>
         </div>
         <div className="care-status">
-          <span>Care status</span>
+          <span>{t.careStatus}</span>
           <b>
             {upcoming ? statusText(upcoming.status) : "No appointment waiting"}
           </b>
@@ -508,23 +712,23 @@ function HomeView({
       </section>
       <section className="patient-quick">
         <button onClick={() => onTab("start")}>
-          <span>Find a doctor</span>
+          <span>{t.findDoctor}</span>
         </button>
         <button onClick={onStart}>
           ＋<span>Book appointment</span>
         </button>
         <button onClick={() => onTab("prescriptions")}>
-          ▤<span>Prescriptions</span>
+          ▤<span>{t.prescriptions}</span>
         </button>
         <button onClick={() => onTab("reports")}>
-          ▣<span>Lab reports</span>
+          ▣<span>{t.reports}</span>
         </button>
       </section>
       <section className="patient-content-grid">
         <article className="patient-card">
           <div className="patient-card-head">
-            <h2>Upcoming care</h2>
-            <button onClick={() => onTab("consultations")}>View all</button>
+            <h2>{t.upcomingCare}</h2>
+            <button onClick={() => onTab("consultations")}>{t.viewAll}</button>
           </div>
           {upcoming ? (
             <div className="appointment-card">
@@ -553,8 +757,8 @@ function HomeView({
         </article>
         <article className="patient-card">
           <div className="patient-card-head">
-            <h2>Recent care</h2>
-            <button onClick={() => onTab("consultations")}>History</button>
+            <h2>{t.recentCare}</h2>
+            <button onClick={() => onTab("consultations")}>{t.viewAll}</button>
           </div>
           {consultations?.length ? (
             consultations.slice(0, 2).map((item) => (
@@ -581,7 +785,7 @@ function HomeView({
         </article>
         <article className="patient-card">
           <div className="patient-card-head">
-            <h2>Notifications</h2>
+            <h2>{t.notifications}</h2>
             <span>{notifications.filter((item) => !item.read).length} new</span>
           </div>
           {notifications.map((item) => (
@@ -699,7 +903,47 @@ function ConsultationsView({ appointments, consultations, onJoin }) {
     </section>
   );
 }
-function PrescriptionsView({ consultations }) {
+function PrescriptionsView({ consultations, doctors, profile }) {
+  const doctorMap = new Map((doctors || []).map((d) => [String(d.id), d]));
+  async function downloadPdf(item) {
+    const { jsPDF } = await import("jspdf");
+    const doc = new jsPDF();
+    const doctor = doctorMap.get(String(item.doctorId));
+    let y = 20;
+    doc.setFontSize(16);
+    doc.text("Nabha Care — Prescription", 14, y);
+    y += 10;
+    doc.setFontSize(11);
+    doc.text(`Date: ${new Date(item.updatedAt || item.createdAt).toLocaleDateString()}`, 14, y);
+    y += 8;
+    doc.text(`Patient: ${profile?.name || "—"}`, 14, y);
+    y += 8;
+    doc.text(`Doctor: ${doctor?.name || "—"}${doctor?.specialization ? ` (${doctor.specialization})` : ""}`, 14, y);
+    y += 12;
+    doc.setFontSize(13);
+    doc.text("Diagnosis / assessment", 14, y);
+    y += 7;
+    doc.setFontSize(11);
+    y = writeWrapped(doc, item.assessment || "—", y);
+    y += 6;
+    doc.setFontSize(13);
+    doc.text("Prescription", 14, y);
+    y += 7;
+    doc.setFontSize(11);
+    y = writeWrapped(doc, item.prescription || "—", y);
+    y += 6;
+    doc.setFontSize(13);
+    doc.text("Advice", 14, y);
+    y += 7;
+    doc.setFontSize(11);
+    writeWrapped(doc, item.advice || "Follow the instructions provided by your doctor.", y);
+    doc.save(`prescription-${new Date(item.updatedAt || item.createdAt).toISOString().slice(0, 10)}.pdf`);
+  }
+  function writeWrapped(doc, text, startY) {
+    const lines = doc.splitTextToSize(text, 180);
+    doc.text(lines, 14, startY);
+    return startY + lines.length * 6;
+  }
   return (
     <section>
       <div className="page-heading">
@@ -720,12 +964,20 @@ function PrescriptionsView({ consultations }) {
                 {item.advice ||
                   "Follow the instructions provided by your doctor."}
               </small>
-              <button
-                className="button button-soft"
-                onClick={() => window.print()}
-              >
-                Print / save
-              </button>
+              <div className="actions">
+                <button
+                  className="button button-soft"
+                  onClick={() => window.print()}
+                >
+                  Print / save
+                </button>
+                <button
+                  className="button button-green"
+                  onClick={() => downloadPdf(item)}
+                >
+                  Download PDF
+                </button>
+              </div>
             </article>
           ))
       ) : (
@@ -912,7 +1164,7 @@ function ProfileView({ profile, language, onSaved }) {
     </section>
   );
 }
-function HelpView({ onStart }) {
+function HelpView({ onStart, onSos, onSymptomChecker }) {
   return (
     <section>
       <div className="page-heading">
@@ -933,21 +1185,213 @@ function HelpView({ onStart }) {
         <article>
           <h3>Emergency support</h3>
           <p>
-            Emergency dispatch is not connected in this demo. For urgent danger,
-            contact your local emergency service or nearest health facility.
+            Raise an SOS and your location is sent to hospital staff, who
+            dispatch the nearest available ambulance.
           </p>
-          <span className="planned-label">Separate service</span>
+          <button className="button button-sos" onClick={onSos}>
+            ⚠ Raise SOS
+          </button>
         </article>
         <article>
           <h3>Symptom checker</h3>
           <p>
-            The AI symptom checker is planned. It will not provide medical
-            advice until clinical safety review is completed.
+            A simple, rule-based checker that flags urgent warning signs —
+            it does not diagnose, and is not a substitute for a doctor.
           </p>
-          <span className="planned-label">Planned</span>
+          <button className="button button-soft" onClick={onSymptomChecker}>
+            Check my symptoms
+          </button>
         </article>
       </div>
     </section>
+  );
+}
+function MedicinesView({ session, onMessage }) {
+  const [query, setQuery] = useState("");
+  const [medicines, setMedicines] = useState(null);
+
+  useEffect(() => {
+    api("/api/medicines", session.token)
+      .then(setMedicines)
+      .catch((err) => onMessage("Could not load medicine availability: " + err.message));
+  }, []);
+
+  const filtered = (medicines || []).filter((m) =>
+    `${m.name} ${m.hospital?.name || ""}`.toLowerCase().includes(query.toLowerCase()),
+  );
+
+  return (
+    <section>
+      <div className="page-heading">
+        <p className="kicker">Pharmacy stock</p>
+        <h1>Medicine availability</h1>
+        <p>Check whether a medicine is currently in stock at nearby hospitals before you travel.</p>
+      </div>
+      <input
+        className="doctor-search"
+        placeholder="Search medicine by name"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+      />
+      {medicines === null ? (
+        <p className="empty">Loading stock information…</p>
+      ) : filtered.length ? (
+        <div className="patient-card">
+          {filtered.map((m) => (
+            <div className="consultation-row" key={m._id}>
+              <div>
+                <b>{m.name}</b>
+                <p>{m.hospital?.name || "Hospital"} · {m.category || "General"}</p>
+              </div>
+              <span className={`badge ${m.stockQuantity <= m.lowStockThreshold ? "badge-low" : ""}`}>
+                {m.stockQuantity > 0
+                  ? `${m.stockQuantity} ${m.unit} in stock${m.stockQuantity <= m.lowStockThreshold ? " (low)" : ""}`
+                  : "Out of stock"}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <EmptyState icon="▤" title="No stock records found" text="Try a different medicine name." />
+      )}
+    </section>
+  );
+}
+function EmergencyView({ emergencies, onRaise }) {
+  return (
+    <section>
+      <div className="page-heading">
+        <p className="kicker">Safety</p>
+        <h1>Emergency</h1>
+        <p>Raise an SOS with your live location if you need urgent help.</p>
+      </div>
+      <div className="patient-card">
+        <button className="button button-sos button-sos-large" onClick={onRaise}>
+          ⚠ Raise Emergency (SOS)
+        </button>
+      </div>
+      <div className="patient-card">
+        <h2>Your emergency history</h2>
+        {emergencies.length ? (
+          emergencies.map((item) => (
+            <div className="consultation-row" key={item._id}>
+              <div>
+                <span className="badge">{dispatchStatusText[item.dispatchStatus] || item.dispatchStatus}</span>
+                <h3>{item.title || item.emergencyType}</h3>
+                <p>{item.details || "No additional details provided."}</p>
+                {item.assignedVehicle && (
+                  <small>
+                    Ambulance: {item.assignedVehicle.vehicleNumber}
+                    {item.assignedVehicle.driver ? ` · Driver: ${item.assignedVehicle.driver.name} (${item.assignedVehicle.driver.phone})` : ""}
+                  </small>
+                )}
+              </div>
+              <small>{new Date(item.createdAt).toLocaleString()}</small>
+            </div>
+          ))
+        ) : (
+          <EmptyState
+            icon="⚠"
+            title="No emergencies raised"
+            text="If you ever need urgent help, use the SOS button above or in the header."
+          />
+        )}
+      </div>
+    </section>
+  );
+}
+function SymptomCheckerModal({ onClose, onSos, onStart }) {
+  const [text, setText] = useState("");
+  const result = checkSymptoms(text);
+  return (
+    <div className="modal-backdrop">
+      <section className="modal" role="dialog" aria-modal="true" aria-label="Symptom checker">
+        <h2>Symptom checker</h2>
+        <p className="muted">
+          Describe what you're experiencing in your own words. This is a
+          simple keyword-based screen for urgent warning signs — it does not
+          diagnose and does not replace a doctor's assessment.
+        </p>
+        <label>
+          Your symptoms
+          <textarea
+            rows="4"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="e.g. fever and cough for two days"
+            autoFocus
+          />
+        </label>
+        {result && (
+          <div className={`symptom-result symptom-${result.level}`}>
+            <b>{result.label}</b>
+            <p>{result.advice}</p>
+          </div>
+        )}
+        <div className="actions">
+          {result?.level === "emergency" ? (
+            <button className="button button-sos" onClick={onSos}>⚠ Raise SOS</button>
+          ) : (
+            <button className="button button-green" onClick={onStart}>Book a consultation</button>
+          )}
+          <button type="button" className="button button-soft" onClick={onClose}>Close</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+function SosModal({ loading, onCancel, onSubmit }) {
+  const [emergencyType, setEmergencyType] = useState("medical");
+  const [severity, setSeverity] = useState("high");
+  const [details, setDetails] = useState("");
+  return (
+    <div className="modal-backdrop">
+      <form
+        className="modal form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSubmit({ emergencyType, severity, details });
+        }}
+      >
+        <h2>⚠ Raise Emergency</h2>
+        <p className="muted">
+          Your current location will be shared with hospital staff so they can
+          dispatch help. Only use this for a genuine emergency.
+        </p>
+        <label>
+          Type of emergency
+          <select value={emergencyType} onChange={(e) => setEmergencyType(e.target.value)}>
+            <option value="medical">Medical</option>
+            <option value="trauma">Trauma / injury</option>
+            <option value="accident">Accident</option>
+            <option value="pregnancy">Pregnancy related</option>
+            <option value="fire">Fire</option>
+            <option value="other">Other</option>
+          </select>
+        </label>
+        <label>
+          Severity
+          <select value={severity} onChange={(e) => setSeverity(e.target.value)}>
+            <option value="critical">Critical — life-threatening</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+        </label>
+        <label>
+          What's happening?
+          <textarea rows="3" value={details} onChange={(e) => setDetails(e.target.value)} placeholder="Briefly describe the emergency" />
+        </label>
+        <div className="actions">
+          <button className="button button-sos" disabled={loading}>
+            {loading ? "Sending location…" : "Confirm & send location"}
+          </button>
+          <button type="button" className="button button-soft" onClick={onCancel} disabled={loading}>
+            Cancel
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 function ConsultationFlow({ flow, setFlow, doctors, onConfirm }) {
