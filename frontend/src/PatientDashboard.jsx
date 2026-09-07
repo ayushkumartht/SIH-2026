@@ -1101,70 +1101,16 @@ function ConsultationFlow({ flow, setFlow, doctors, onConfirm }) {
     </div>
   );
 }
-function CallScreen({ call, onClose }) {
-  const [mic, setMic] = useState(true);
-  const [camera, setCamera] = useState(true);
-  const [quality, setQuality] = useState("HD video");
-  const [vitals, setVitals] = useState(false);
+function CallScreen({ call, session, onClose }) {
   return (
-    <div className="call-screen">
-      <header>
-        <div>
-          <span className="live-dot">● Doctor connection ready</span>
-          <h2>{call.doctor?.name || "Your doctor"}</h2>
-          <p>{call.doctor?.specialization || "General medicine"}</p>
-        </div>
-        <select
-          value={quality}
-          onChange={(event) => setQuality(event.target.value)}
-          aria-label="Demo network mode"
-        >
-          <option>HD video</option>
-          <option>Low-resolution video</option>
-          <option>Audio only</option>
-          <option>Very poor — fallback</option>
-        </select>
-      </header>
-      <main>
-        <div className="remote-video">
-          <span>Doctor video area</span>
-          <div className="local-video">
-            Your preview {camera ? "on" : "off"}
-          </div>
-        </div>
-        <aside>
-          <h3>Consultation details</h3>
-          <p>
-            <b>Connection:</b> {quality}
-          </p>
-          <p>
-            Video adapts to your connection. Audio is kept on whenever possible.
-          </p>
-          {vitals ? (
-            <p className="success-note">Vitals saved for doctor review.</p>
-          ) : (
-            <button
-              className="button button-soft"
-              onClick={() => setVitals(true)}
-            >
-              Submit demo vitals
-            </button>
-          )}
-        </aside>
-      </main>
-      <footer>
-        <button onClick={() => setMic(!mic)}>
-          {mic ? "Mute" : "Unmute"}
-        </button>
-        <button onClick={() => setCamera(!camera)}>
-          {camera ? "Camera off" : "Camera on"}
-        </button>
-        <button onClick={() => setQuality("HD video")}>Reconnect</button>
-        <button className="end-call" onClick={onClose}>
-          End consultation
-        </button>
-      </footer>
-    </div>
+    <LiveConsultation
+      session={session}
+      appointment={call}
+      roomId={call?.roomId || call?._id || "demo-room"}
+      role="patient"
+      onClose={onClose}
+      onEndCall={onClose}
+    />
   );
 }
 function EmptyState({ icon, title, text, action, onAction }) {

@@ -750,9 +750,12 @@ export default function DoctorDashboard({ session, onLogout }) {
       {/* ── Teleconsultation Active Call ── */}
       {activeCall && (
         <LiveConsultation
-          roomId={activeCall.roomId}
+          session={session}
           token={token}
+          appointment={activeCall.appointment || { _id: activeCall.roomId, id: activeCall.roomId }}
+          roomId={activeCall.roomId}
           role="doctor"
+          onClose={() => setActiveCall(null)}
           onEndCall={() => setActiveCall(null)}
         />
       )}
