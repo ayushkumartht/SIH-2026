@@ -18,8 +18,8 @@ app.use(helmet());
 if (process.env.NODE_ENV !== "test") {
   app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
 }
-app.use(express.json());
 app.use(cors({ origin: corsOrigins }));
+app.use(express.json());
 
 const apiRateLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false });
 const authRateLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false });
@@ -39,6 +39,9 @@ import ashaRoutes from "./routes/ashaRoutes.js";
 import ambulanceRoutes from "./routes/ambulanceRoutes.js";
 import medicineRoutes from "./routes/medicineRoutes.js";
 import hospitalRoutes from "./routes/hospitalRoutes.js";
+import driverRoutes from "./routes/driverRoutes.js";
+import transportRoutes from "./routes/transportRoutes.js";
+import twilioWebhookRoutes from "./routes/twilioWebhookRoutes.js";
 
 app.use("/api/doctors", doctorRoutes);
 app.use("/api/patients", patientRoutes);
@@ -53,6 +56,11 @@ app.use("/api/lab-doctors", labDoctorRoutes);
 app.use("/offline-requests", offlineRequestRoute);
 app.use("/api/portal", portalRoutes);
 app.use("/api/asha", ashaRoutes);
+app.use("/api/driver", driverRoutes);
+app.use("/api/transport-requests", transportRoutes);
+// Twilio posts form-encoded (not JSON) and calls this route directly from the
+// internet, so it gets its own body parser and sits outside the JWT-protected routes.
+app.use("/api/twilio", express.urlencoded({ extended: false }), twilioWebhookRoutes);
 
 app.get("/api/health", (req, res) => {
   res.status(200).json({
@@ -65,6 +73,24 @@ app.get("/api/health", (req, res) => {
 
 app.get("/", (req, res) => {
   res.send("API is running...");
+});
+
+app.use((req, res) => {
+  res.status(404).json({ success: false, error: "Route not found" });
+});
+
+app.use((err, req, res, next) => {
+  if (err.name === "CastError") {
+    return res.status(400).json({ success: false, error: `Invalid ${err.path}: ${err.value}` });
+  }
+  if (err.name === "ValidationError") {
+    return res.status(400).json({ success: false, error: err.message });
+  }
+  console.error(err.stack || err);
+  res.status(err.status || 500).json({
+    success: false,
+    error: process.env.NODE_ENV === "production" ? "Internal server error" : err.message,
+  });
 });
 
 export default app;

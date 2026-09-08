@@ -5,7 +5,11 @@ import { recordConsultationAudit } from "../services/consultationAuditStore.js";
 
 function isCallParticipant(call, user) {
   if (!user) return false;
-  return (user.role === 'patient' && String(call.patientId) === String(user.id)) || (user.role === 'doctor' && String(call.doctorId) === String(user.id));
+  return (
+    (user.role === 'patient' && String(call.patientId) === String(user.id)) ||
+    (user.role === 'doctor' && String(call.doctorId) === String(user.id)) ||
+    (user.role === 'asha' && String(call.ashaId) === String(user.id))
+  );
 }
 
 export const updateCallQuality = async (req, res, next) => {

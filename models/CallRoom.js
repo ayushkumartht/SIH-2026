@@ -37,6 +37,7 @@ const CallRoomSchema = new mongoose.Schema(
     appointmentId: { type: String, index: true },
     doctorId: String,
     patientId: String,
+    ashaId: String,
     mode: {
       type: String,
       enum: ["daily", "webrtc"],

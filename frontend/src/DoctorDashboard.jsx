@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { io } from "socket.io-client";
 import LiveConsultation from "./LiveConsultation";
 
 const API = (import.meta.env.VITE_API_URL || "http://localhost:3000").replace(/\/$/, "");
@@ -65,7 +66,7 @@ function LeafletMap({ markers = [], center, zoom = 14, height = "340px" }) {
 
       if (!mapRef.current) return;
       const map = L.default.map(mapRef.current).setView(
-        center || [30.3753, 76.7821],
+        center || [30.3753, 76.15],
         zoom,
       );
       L.default.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -379,6 +380,9 @@ export default function DoctorDashboard({ session, onLogout }) {
   // Map Modal
   const [mapTarget, setMapTarget] = useState(null);
 
+  // Incoming ASHA-assisted call request popup
+  const [incomingCall, setIncomingCall] = useState(null);
+
   // Toast
   const [toast, setToast] = useState("");
 
@@ -394,6 +398,10 @@ export default function DoctorDashboard({ session, onLogout }) {
       setData(d);
       setError("");
     } catch (e) {
+      if (/token|unauthor|expired/i.test(e.message)) {
+        onLogout();
+        return;
+      }
       setError(e.message);
     } finally {
       setLoading(false);
@@ -403,7 +411,20 @@ export default function DoctorDashboard({ session, onLogout }) {
   useEffect(() => {
     loadData();
     const timer = setInterval(loadData, 15000);
-    return () => clearInterval(timer);
+
+    const socket = io(API, { auth: { token }, transports: ["websocket", "polling"] });
+    socket.on("connect", () => socket.emit("doctor:join", () => {}));
+    socket.on("consultation:incoming_call", (payload) => {
+      setIncomingCall(payload);
+      loadData();
+    });
+    socket.on("emergency:status_changed", loadData);
+    socket.on("emergency:new", loadData);
+
+    return () => {
+      clearInterval(timer);
+      socket.disconnect();
+    };
   }, [token]);
 
   if (loading && !data) {
@@ -473,6 +494,15 @@ export default function DoctorDashboard({ session, onLogout }) {
     setFormDiagnosis(cons.assessment || "");
     setFormPrescription(cons.prescription || "");
     setFormNotes(cons.advice || "");
+  };
+
+  const acceptIncomingCall = () => {
+    if (!incomingCall) return;
+    setActiveCall({
+      appointment: { _id: incomingCall.appointmentId },
+      patientName: incomingCall.patientName,
+    });
+    setIncomingCall(null);
   };
 
   return (
@@ -591,6 +621,9 @@ export default function DoctorDashboard({ session, onLogout }) {
                 appointments.map((apt) => {
                   const patient = apt.patient || {};
                   const activeCons = consultations.find((c) => c.patient?._id === patient._id);
+                  const linkedCons = consultations.find((c) => String(c.appointmentId) === String(apt._id));
+                  const ashaAssisted = Boolean(linkedCons?.ashaId);
+                  const patientWaiting = Boolean(linkedCons) && !ashaAssisted && !["completed", "cancelled"].includes(linkedCons?.status);
                   return (
                     <div className="dd-queue-card" key={apt._id}>
                       <div className="dd-qc-header">
@@ -601,7 +634,11 @@ export default function DoctorDashboard({ session, onLogout }) {
                             <span>Phone: {patient.phone || "N/A"}</span>
                           </div>
                         </div>
-                        <span className={`dd-status-badge ${apt.status}`}>{apt.status?.toUpperCase()}</span>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end" }}>
+                          <span className={`dd-status-badge ${apt.status}`}>{apt.status?.toUpperCase()}</span>
+                          {ashaAssisted && <span className="dd-badge-asha">ASHA waiting to join</span>}
+                          {patientWaiting && <span className="dd-badge-asha">Patient may be waiting</span>}
+                        </div>
                       </div>
 
                       {apt.reason && (
@@ -615,7 +652,7 @@ export default function DoctorDashboard({ session, onLogout }) {
                           className="dd-btn dd-btn-primary"
                           onClick={() =>
                             setActiveCall({
-                              roomId: apt.roomId || `room-${apt._id}`,
+                              appointment: apt,
                               patientName: patient.name || "Patient",
                               consultationId: activeCons?._id,
                             })
@@ -683,7 +720,7 @@ export default function DoctorDashboard({ session, onLogout }) {
                         <span className={`dd-status-badge ${c.status}`}>{c.status?.toUpperCase()}</span>
                       </div>
                       <small>Date: {new Date(c.createdAt).toLocaleDateString()} • {new Date(c.createdAt).toLocaleTimeString()}</small>
-                      {c.diagnosis && <p className="dd-cc-diag"><b>Diagnosis:</b> {c.diagnosis}</p>}
+                      {c.assessment && <p className="dd-cc-diag"><b>Diagnosis:</b> {c.assessment}</p>}
                     </div>
                   ))
                 ) : (
@@ -807,12 +844,37 @@ export default function DoctorDashboard({ session, onLogout }) {
         <LiveConsultation
           session={session}
           token={token}
-          appointment={activeCall.appointment || { _id: activeCall.roomId, id: activeCall.roomId }}
-          roomId={activeCall.roomId}
+          appointment={activeCall.appointment}
           role="doctor"
           onClose={() => setActiveCall(null)}
           onEndCall={() => setActiveCall(null)}
         />
+      )}
+
+      {/* Incoming ASHA-assisted call popup */}
+      {incomingCall && !activeCall && (
+        <div className="dd-incoming-backdrop">
+          <div className="dd-incoming-card">
+            <span className="dd-incoming-badge">
+              {incomingCall.via === "asha" ? "ASHA-assisted consultation" : "Patient waiting"}
+            </span>
+            <h2>{incomingCall.patientName || "Patient"}</h2>
+            <p>
+              {incomingCall.via === "asha"
+                ? incomingCall.ashaEmail
+                  ? `Requested by ASHA worker (${incomingCall.ashaEmail})`
+                  : "An ASHA worker is waiting to connect this patient with you."
+                : "Your patient has joined the consultation and is waiting for you."}
+            </p>
+            {incomingCall.reason && <p className="dd-incoming-reason">{incomingCall.reason}</p>}
+            <div className="dd-incoming-actions">
+              <button className="dd-btn dd-btn-outline" onClick={() => setIncomingCall(null)}>Dismiss</button>
+              <button className="dd-btn dd-btn-primary" onClick={acceptIncomingCall}>
+                <Icons.Phone /> Accept &amp; join call
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Toast Notification */}

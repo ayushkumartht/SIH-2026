@@ -1,5 +1,11 @@
+import bcrypt from 'bcryptjs';
 import Ambulance from '../models/Ambulance.js';
 import Driver from '../models/Driver.js';
+
+async function buildDriverCredentials({ email, password }) {
+  if (!email || !password) return {};
+  return { email: email.toLowerCase(), password: await bcrypt.hash(password, 10) };
+}
 
 export const listAmbulances = async (req, res, next) => {
   try {
@@ -17,7 +23,8 @@ export const createAmbulance = async (req, res, next) => {
 
     let driverId = driver?.id || null;
     if (!driverId && driver?.name && driver?.phone && driver?.licenseNo) {
-      const created = await Driver.create({ name: driver.name, phone: driver.phone, licenseNo: driver.licenseNo });
+      const credentials = await buildDriverCredentials(driver);
+      const created = await Driver.create({ name: driver.name, phone: driver.phone, licenseNo: driver.licenseNo, ...credentials });
       driverId = created._id;
     }
 
@@ -51,16 +58,20 @@ export const listDrivers = async (req, res, next) => {
 
 export const createDriver = async (req, res, next) => {
   try {
-    const { name, phone, licenseNo } = req.body;
+    const { name, phone, licenseNo, email, password } = req.body;
     if (!name || !phone || !licenseNo) return res.status(400).json({ success: false, error: 'name, phone and licenseNo are required', statusCode: 400 });
-    const driver = await Driver.create({ name, phone, licenseNo });
+    const credentials = await buildDriverCredentials({ email, password });
+    const driver = await Driver.create({ name, phone, licenseNo, ...credentials });
     res.status(201).json({ success: true, data: driver });
   } catch (e) { next(e); }
 };
 
 export const updateDriver = async (req, res, next) => {
   try {
-    const updated = await Driver.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    const updates = { ...req.body };
+    if (updates.password) updates.password = await bcrypt.hash(updates.password, 10);
+    if (updates.email) updates.email = updates.email.toLowerCase();
+    const updated = await Driver.findByIdAndUpdate(req.params.id, updates, { new: true });
     if (!updated) return res.status(404).json({ success: false, error: 'Driver not found', statusCode: 404 });
     res.json({ success: true, data: updated });
   } catch (e) { next(e); }

@@ -4,6 +4,7 @@ import Staff from '../models/Staff.js';
 import Doctor from '../models/doctor.js';
 import LabDoctor from '../models/LabDoctor.js';
 import Patient from '../models/patient.js';
+import Driver from '../models/Driver.js';
 
 function signToken(id, role, email) {
   return jwt.sign({ id, role, email }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '1d' });
@@ -218,6 +219,11 @@ export const login = async (req, res, next) => {
     }
 
     if (!user) {
+      user = await Driver.findOne({ email: lowerEmail }).select('+password');
+      if (user) role = 'driver';
+    }
+
+    if (!user) {
       return res.status(401).json({
         success: false,
         error: 'Invalid credentials',
@@ -245,6 +251,16 @@ export const login = async (req, res, next) => {
         email: user.email,
         mobile: user.mobile,
         specialization: user.specialization,
+        createdAt: user.createdAt
+      };
+    } else if (role === 'driver') {
+      userData = {
+        id: user._id,
+        name: user.name,
+        role,
+        email: user.email,
+        phone: user.phone,
+        licenseNo: user.licenseNo,
         createdAt: user.createdAt
       };
     } else {

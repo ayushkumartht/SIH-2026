@@ -85,6 +85,11 @@ const emergencySchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    hospitalAlertedAt: Date,
+    escalatedToControlRoom: {
+      type: Boolean,
+      default: false,
+    },
   },
   {
     timestamps: true,

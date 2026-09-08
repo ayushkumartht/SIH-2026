@@ -303,13 +303,27 @@ export async function getDoctorDashboard(req, res, next) {
         .populate({ path: "assignedVehicle", populate: { path: "driver" } })
         .sort({ severity: -1, createdAt: -1 }),
     ]);
+
+    const patientById = new Map();
+    patients.forEach((p) => patientById.set(String(p._id), p));
+    appointments.forEach((a) => {
+      if (a.patient && !patientById.has(String(a.patient._id))) {
+        patientById.set(String(a.patient._id), a.patient);
+      }
+    });
+    const consultationsWithPatient = consultations.map((c) => {
+      const obj = c.toObject();
+      obj.patient = patientById.get(String(c.patientId)) || null;
+      return obj;
+    });
+
     res.json({
       success: true,
       data: {
         doctor: publicDoctor(doctor),
         patients,
         appointments,
-        consultations,
+        consultations: consultationsWithPatient,
         emergencies,
       },
     });

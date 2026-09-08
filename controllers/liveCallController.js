@@ -1,4 +1,5 @@
 import Appointment from "../models/Appointment.js";
+import Patient from "../models/patient.js";
 import { v4 as uuidv4 } from "uuid";
 import {
   createCallRoom,
@@ -83,6 +84,20 @@ export async function createOrJoinAppointmentCall(req, res, next) {
         actorId: String(req.user.id),
         actorRole: req.user.role,
       });
+
+      // Only the patient's own device can start this (ASHA-facilitated calls
+      // go through the separate /api/asha/calls/session), so a freshly
+      // created room here always means the patient is waiting — let the
+      // doctor's dashboard know immediately instead of relying on its poll.
+      if (req.user.role === "patient") {
+        const patient = await Patient.findById(patientId).select("name");
+        req.app.get("io")?.to(`doctor:${doctorId}`).emit("consultation:incoming_call", {
+          via: "patient",
+          appointmentId: String(appointmentId),
+          patientName: patient?.name,
+          reason: appointment.reason,
+        });
+      }
     }
     const consultation = await findConsultation(room.consultationId);
     res.json({

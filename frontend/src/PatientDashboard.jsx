@@ -1,6 +1,17 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { io } from "socket.io-client";
 import LiveConsultation from "./LiveConsultation";
 import { saveSnapshot, loadSnapshot, queueRequest, flushQueue } from "./offlineCache";
+
+function haversineKmClient(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
 
 // ─── LeafletMap component (used in hospitals tab + location sharing) ───────────
 function LeafletMap({ markers = [], center, zoom = 13, height = "380px", onHospitalClick }) {
@@ -17,7 +28,7 @@ function LeafletMap({ markers = [], center, zoom = 13, height = "380px", onHospi
         shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
       });
       if (!mapRef.current) return;
-      const map = L.default.map(mapRef.current).setView(center || [30.3753, 76.7821], zoom);
+      const map = L.default.map(mapRef.current).setView(center || [30.3753, 76.15], zoom);
       L.default.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: "\u00a9 OpenStreetMap contributors",
         maxZoom: 18,
@@ -44,10 +55,21 @@ function LeafletMap({ markers = [], center, zoom = 13, height = "380px", onHospi
 
   function addMarkers(list, ctx, onClick) {
     if (!ctx || !list.length) return;
-    list.forEach((m) => {
-      const marker = ctx.L.marker([m.lat, m.lng]).addTo(ctx.map);
+    list.forEach((m, i) => {
+      const isUser = m.id === "user";
+      const isAmbulance = m.kind === "ambulance";
+      const pinClass = isUser ? "map-pin-user" : isAmbulance ? "map-pin-ambulance" : m.type === "private" ? "map-pin-private" : "map-pin-gov";
+      const glyph = isUser ? "\u{1F4CD}" : isAmbulance ? "\u{1F691}" : "\u{1F3E5}";
+      const icon = ctx.L.divIcon({
+        className: "",
+        html: `<div class="map-pin ${pinClass}" style="animation-delay:${Math.min(i, 8) * 55}ms"><span class="map-pin-glyph">${glyph}</span></div><div class="map-pin-label">${m.label || m.name || ""}</div>`,
+        iconSize: [36, 36],
+        iconAnchor: [18, 36],
+        popupAnchor: [0, -32],
+      });
+      const marker = ctx.L.marker([m.lat, m.lng], { icon }).addTo(ctx.map);
       if (m.popup) marker.bindPopup(m.popup);
-      if (onClick && m.id) marker.on("click", () => onClick(m.id));
+      if (onClick && m.id && !isUser) marker.on("click", () => onClick(m.id));
       ctx.markers.push(marker);
     });
   }
@@ -73,6 +95,7 @@ const labels = {
     reports: "Reports",
     hospitals: "Hospitals & Map",
     medicines: "Medicine availability",
+    transport: "Book a ride",
     emergency: "Emergency",
     profile: "Profile",
     help: "Help",
@@ -99,6 +122,7 @@ const labels = {
     reports: "रिपोर्ट",
     hospitals: "अस्पताल और नक्शा",
     medicines: "दवा उपलब्धता",
+    transport: "सवारी बुक करें",
     emergency: "आपातकाल",
     profile: "प्रोफ़ाइल",
     help: "सहायता",
@@ -125,6 +149,7 @@ const labels = {
     reports: "ਰਿਪੋਰਟਾਂ",
     hospitals: "ਹਸਪਤਾਲ ਅਤੇ ਨਕਸ਼ਾ",
     medicines: "ਦਵਾਈ ਉਪਲਬਧਤਾ",
+    transport: "ਸਵਾਰੀ ਬੁੱਕ ਕਰੋ",
     emergency: "ਐਮਰਜੈਂਸੀ",
     profile: "ਪ੍ਰੋਫ਼ਾਈਲ",
     help: "ਮਦਦ",
@@ -432,6 +457,7 @@ export default function PatientDashboard({ session, onLogout }) {
     ["reports", t.reports],
     ["hospitals", t.hospitals],
     ["medicines", t.medicines],
+    ["transport", t.transport],
     ["emergency", t.emergency],
     ["profile", t.profile],
     ["help", t.help],
@@ -617,8 +643,9 @@ export default function PatientDashboard({ session, onLogout }) {
             />
           )}
           {tab === "medicines" && <MedicinesView session={session} onMessage={setMessage} />}
+          {tab === "transport" && <TransportView session={session} onMessage={setMessage} />}
           {tab === "emergency" && (
-            <EmergencyView emergencies={emergencies} onRaise={() => setSosOpen(true)} />
+            <EmergencyView emergencies={emergencies} onRaise={() => setSosOpen(true)} session={session} />
           )}
           {tab === "help" && (
             <HelpView
@@ -1011,22 +1038,39 @@ function HospitalsView({ session, userCoords, setUserCoords, hospitals, setHospi
   const API_BASE = (import.meta.env.VITE_API_URL || "http://localhost:3000").replace(/\/$/, "");
   const hasFetched = useRef(false);
 
-  async function fetchHospitals(lat, lng) {
+  const NABHA_DEFAULT = { lat: 30.3753, lng: 76.15 };
+
+  async function fetchHospitals(lat, lng, isFallback = false) {
     setHospitalsLoading(true);
     try {
       const res = await fetch(`${API_BASE}/api/portal/patient/hospitals/nearby?lat=${lat}&lng=${lng}&radius=30`, { headers: { Authorization: `Bearer ${session.token}` } });
       const body = await res.json().catch(() => ({}));
-      setHospitals(body.data || []);
+      const data = body.data || [];
+      if (data.length === 0 && !isFallback) {
+        onMessage("No hospitals found near your current GPS location — showing facilities near Nabha instead.");
+        setUserCoords(NABHA_DEFAULT);
+        return fetchHospitals(NABHA_DEFAULT.lat, NABHA_DEFAULT.lng, true);
+      }
+      setHospitals(data);
     } catch { onMessage("Could not load nearby hospitals."); }
     setHospitalsLoading(false);
   }
 
   function handleLocate() {
-    if (!navigator.geolocation) { onMessage("GPS not supported on this device."); return; }
+    if (!navigator.geolocation) {
+      onMessage("GPS not supported on this device — showing facilities near Nabha.");
+      setUserCoords(NABHA_DEFAULT);
+      fetchHospitals(NABHA_DEFAULT.lat, NABHA_DEFAULT.lng, true);
+      return;
+    }
     setHospitalsLoading(true);
     navigator.geolocation.getCurrentPosition(
       (pos) => { const { latitude: lat, longitude: lng } = pos.coords; setUserCoords({ lat, lng }); fetchHospitals(lat, lng); },
-      (err) => { setHospitalsLoading(false); onMessage("Location error: " + (err.message || "Permission denied")); },
+      (err) => {
+        onMessage("Location unavailable (" + (err.message || "permission denied") + ") — showing facilities near Nabha.");
+        setUserCoords(NABHA_DEFAULT);
+        fetchHospitals(NABHA_DEFAULT.lat, NABHA_DEFAULT.lng, true);
+      },
       { timeout: 12000, enableHighAccuracy: true }
     );
   }
@@ -1038,12 +1082,12 @@ function HospitalsView({ session, userCoords, setUserCoords, hospitals, setHospi
     else handleLocate();
   }, []);
 
+  const typeLabel = (t) => ({ district: "District Hospital", "sub-district": "Sub-Divisional Hospital", government: "Government Hospital", phc: "Primary Health Centre (PHC)", chc: "Community Health Centre (CHC)", private: "Private Hospital" }[t] || t || "Hospital");
   const mapMarkers = [
-    ...(userCoords ? [{ id: "user", lat: userCoords.lat, lng: userCoords.lng, popup: "<b>Your Location</b>" }] : []),
-    ...hospitals.map((h) => ({ id: h._id, lat: h.latitude, lng: h.longitude, popup: `<b>${h.name}</b><br>${h.type?.toUpperCase()}<br>${h.distanceKm} km<br>Contact: ${h.contact || "N/A"}` })),
+    ...(userCoords ? [{ id: "user", lat: userCoords.lat, lng: userCoords.lng, label: "You", popup: "<b>Your Location</b>" }] : []),
+    ...hospitals.map((h) => ({ id: h._id, lat: h.latitude, lng: h.longitude, type: h.type, label: h.name, popup: `<b>${h.name}</b><br>${typeLabel(h.type)}<br>${h.distanceKm} km away<br>Contact: ${h.contact || "N/A"}` })),
   ];
   const mapCenter = selectedHospital ? [selectedHospital.latitude, selectedHospital.longitude] : userCoords ? [userCoords.lat, userCoords.lng] : undefined;
-  const typeLabel = (t) => ({ district: "District Hospital", phc: "Primary Health Centre (PHC)", chc: "Community Health Centre (CHC)", private: "Private Hospital" }[t] || t || "Hospital");
 
   return (
     <section style={{ animation: "fadeInUp .28s ease" }}>
@@ -1257,7 +1301,220 @@ function MedicinesView({ session, onMessage }) {
     </section>
   );
 }
-function EmergencyView({ emergencies, onRaise }) {
+const transportStatusText = {
+  requested: "Request received",
+  searching_driver: "Finding a driver",
+  driver_assigned: "Driver assigned",
+  dispatched: "Driver on the way to you",
+  en_route: "On the way to hospital",
+  arrived: "Arrived",
+  completed: "Completed",
+  cancelled: "Cancelled",
+};
+
+function TransportView({ session, onMessage }) {
+  const [hospitals, setHospitals] = useState([]);
+  const [requests, setRequests] = useState(null);
+  const [destinationHospital, setDestinationHospital] = useState("");
+  const [notes, setNotes] = useState("");
+  const [coords, setCoords] = useState(null);
+  const [locating, setLocating] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  function loadRequests() {
+    api("/api/transport-requests", session.token)
+      .then(setRequests)
+      .catch((err) => onMessage("Could not load your transport requests: " + err.message));
+  }
+
+  useEffect(() => {
+    api("/api/hospitals", session.token).then(setHospitals).catch(() => {});
+    loadRequests();
+    const timer = setInterval(loadRequests, 15000);
+    return () => clearInterval(timer);
+  }, []);
+
+  function useMyLocation() {
+    if (!navigator.geolocation) {
+      onMessage("GPS not supported on this device — using Nabha as pickup location.");
+      setCoords({ lat: 30.3753, lng: 76.15 });
+      return;
+    }
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setLocating(false);
+      },
+      () => {
+        onMessage("Location unavailable — using Nabha as pickup location.");
+        setCoords({ lat: 30.3753, lng: 76.15 });
+        setLocating(false);
+      },
+      { timeout: 12000, enableHighAccuracy: true },
+    );
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+    if (!coords) return onMessage("Please set your pickup location first.");
+    if (!destinationHospital) return onMessage("Please choose a destination hospital.");
+    setSubmitting(true);
+    try {
+      await api("/api/transport-requests", session.token, {
+        method: "POST",
+        body: JSON.stringify({
+          pickupLatitude: coords.lat,
+          pickupLongitude: coords.lng,
+          destinationHospital,
+          notes,
+        }),
+      });
+      onMessage("Transport request sent — we're finding you a driver.");
+      setNotes("");
+      loadRequests();
+    } catch (err) {
+      onMessage("Could not book transport: " + err.message);
+    }
+    setSubmitting(false);
+  }
+
+  async function cancel(id) {
+    try {
+      await api(`/api/transport-requests/${id}/cancel`, session.token, { method: "PUT" });
+      loadRequests();
+    } catch (err) {
+      onMessage(err.message);
+    }
+  }
+
+  const active = (requests || []).filter((r) => !["completed", "cancelled"].includes(r.status));
+  const past = (requests || []).filter((r) => ["completed", "cancelled"].includes(r.status));
+
+  return (
+    <section>
+      <div className="page-heading">
+        <p className="kicker">Non-emergency transport</p>
+        <h1>Book a ride</h1>
+        <p>Request a vehicle to take you to a hospital for a routine visit — no emergency needed.</p>
+      </div>
+
+      <form className="patient-card profile-form" onSubmit={submit}>
+        <h2>New request</h2>
+        <label>
+          Pickup location
+          <div className="transport-pickup-row">
+            <input readOnly value={coords ? `${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}` : "Not set"} placeholder="Not set" />
+            <button type="button" className="button button-soft" onClick={useMyLocation} disabled={locating}>
+              {locating ? "Locating…" : "Use my location"}
+            </button>
+          </div>
+        </label>
+        <label>
+          Destination hospital
+          <select value={destinationHospital} onChange={(e) => setDestinationHospital(e.target.value)} required>
+            <option value="">Select a hospital</option>
+            {hospitals.map((h) => (
+              <option key={h._id} value={h._id}>{h.name}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Notes (optional)
+          <input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. wheelchair needed" />
+        </label>
+        <button className="button button-green" disabled={submitting}>
+          {submitting ? "Requesting…" : "Request a ride"}
+        </button>
+      </form>
+
+      <div className="patient-card">
+        <h2>Active requests</h2>
+        {active.length ? (
+          active.map((r) => (
+            <div className="consultation-row" key={r._id}>
+              <div>
+                <span className="badge">{transportStatusText[r.status] || r.status}</span>
+                <h3>To {r.destinationHospital?.name || "Hospital"}</h3>
+                {r.assignedVehicle && (
+                  <small>
+                    Vehicle: {r.assignedVehicle.vehicleNumber}
+                    {r.assignedVehicle.driver ? ` · Driver: ${r.assignedVehicle.driver.name} (${r.assignedVehicle.driver.phone})` : ""}
+                  </small>
+                )}
+              </div>
+              {!["dispatched", "en_route", "arrived"].includes(r.status) && (
+                <button className="button button-outline" onClick={() => cancel(r._id)}>Cancel</button>
+              )}
+            </div>
+          ))
+        ) : (
+          <EmptyState icon="🚐" title="No active requests" text="Book a ride above when you need one." />
+        )}
+      </div>
+
+      {past.length > 0 && (
+        <div className="patient-card">
+          <h2>Past requests</h2>
+          {past.map((r) => (
+            <div className="consultation-row" key={r._id}>
+              <div>
+                <span className="badge">{transportStatusText[r.status] || r.status}</span>
+                <h3>To {r.destinationHospital?.name || "Hospital"}</h3>
+                <small>{new Date(r.createdAt).toLocaleString()}</small>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+function LiveTrackingMap({ session, emergency }) {
+  const vehicle = emergency.assignedVehicle;
+  const [liveLoc, setLiveLoc] = useState(
+    vehicle?.currentLocation?.latitude != null
+      ? { lat: vehicle.currentLocation.latitude, lng: vehicle.currentLocation.longitude }
+      : null,
+  );
+
+  useEffect(() => {
+    if (!vehicle?._id) return undefined;
+    const socket = io(API, { auth: { token: session.token }, transports: ["websocket", "polling"] });
+    socket.on("ambulance:location", (payload) => {
+      if (String(payload.ambulanceId) === String(vehicle._id)) {
+        setLiveLoc({ lat: payload.latitude, lng: payload.longitude });
+      }
+    });
+    return () => socket.disconnect();
+  }, [vehicle?._id, session.token]);
+
+  if (!liveLoc) {
+    return <p className="muted">Waiting for the ambulance's live GPS signal…</p>;
+  }
+
+  const distanceKm = haversineKmClient(emergency.latitude, emergency.longitude, liveLoc.lat, liveLoc.lng);
+
+  return (
+    <div className="live-track">
+      <div className="live-track-badge">
+        <span className="live-track-dot" />
+        <b>{distanceKm.toFixed(distanceKm < 10 ? 1 : 0)} km away</b>
+        <small>Live tracking · {vehicle.vehicleNumber}</small>
+      </div>
+      <LeafletMap
+        markers={[
+          { id: "user", lat: emergency.latitude, lng: emergency.longitude, label: "You", popup: "Your location" },
+          { kind: "ambulance", lat: liveLoc.lat, lng: liveLoc.lng, label: vehicle.vehicleNumber, popup: `<b>${vehicle.vehicleNumber}</b><br>${vehicle.driver ? `${vehicle.driver.name} · ${vehicle.driver.phone}` : ""}` },
+        ]}
+        center={[liveLoc.lat, liveLoc.lng]}
+        zoom={14}
+        height="260px"
+      />
+    </div>
+  );
+}
+function EmergencyView({ emergencies, onRaise, session }) {
   return (
     <section>
       <div className="page-heading">
@@ -1284,6 +1541,9 @@ function EmergencyView({ emergencies, onRaise }) {
                     Ambulance: {item.assignedVehicle.vehicleNumber}
                     {item.assignedVehicle.driver ? ` · Driver: ${item.assignedVehicle.driver.name} (${item.assignedVehicle.driver.phone})` : ""}
                   </small>
+                )}
+                {item.assignedVehicle && !["at_hospital", "handed_over", "closed", "cancelled"].includes(item.dispatchStatus) && (
+                  <LiveTrackingMap session={session} emergency={item} />
                 )}
               </div>
               <small>{new Date(item.createdAt).toLocaleString()}</small>

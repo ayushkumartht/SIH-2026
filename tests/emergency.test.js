@@ -4,7 +4,13 @@ import { connectTestDB, clearTestDB, disconnectTestDB } from "./dbSetup.js";
 
 beforeAll(connectTestDB);
 afterEach(clearTestDB);
-afterAll(disconnectTestDB);
+// Creating an emergency fires the dispatch engine in the background (it
+// doesn't block the API response). Give it a moment to finish before the DB
+// connection is torn down, so a straggling query doesn't fail after close.
+afterAll(async () => {
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  await disconnectTestDB();
+});
 
 async function signupPatient(email) {
   const res = await request(app).post("/api/auth/patient/signup").send({

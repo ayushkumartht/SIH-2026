@@ -10,6 +10,7 @@ import {
   acknowledgeEmergency,
   resolveEmergency,
   deleteEmergency,
+  getDispatchLog,
 } from '../controllers/emergencyController.js';
 import { validate } from '../middleware/validate.js';
 import {
@@ -26,6 +27,7 @@ router.get('/', authorizeRole(['admin', 'receptionist', 'doctor', 'patient', 'as
 router.post('/', authorizeRole(['patient', 'asha', 'doctor']), createEmergencyValidation, validate, createEmergency);
 
 router.get('/:id/suggest-ambulances', authorizeRole(['admin', 'receptionist', 'doctor']), suggestAmbulances);
+router.get('/:id/dispatch-log', authorizeRole(['admin', 'receptionist', 'doctor']), getDispatchLog);
 router.put('/:id/assign-vehicle', authorizeRole(['admin', 'receptionist']), assignVehicleValidation, validate, assignVehicle);
 router.put('/:id/status', authorizeRole(['admin', 'receptionist']), updateDispatchStatusValidation, validate, updateDispatchStatus);
 router.put('/:id/assign', authorizeRole(['admin', 'receptionist']), assignEmergencyValidation, validate, assignDoctor);

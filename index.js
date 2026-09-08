@@ -4,6 +4,7 @@ import { Server } from 'socket.io';
 import { calculateNetworkQuality } from './utils/networkQuality.js';
 import { findCallRoom, saveCallRoom } from './services/callRoomStore.js';
 import { authenticateTeleconsultationSocket } from './middleware/auth.js';
+import Ambulance from './models/Ambulance.js';
 
 dotenv.config({ quiet: true });
 
@@ -46,7 +47,10 @@ io.on('connection', (socket) => {
       if (!call) throw new Error('Call room not found');
 
       const userId = String(socket.user?.id || '');
-      const allowed = userId === String(call.doctorId) || userId === String(call.patientId);
+      const allowed =
+        userId === String(call.doctorId) ||
+        userId === String(call.patientId) ||
+        (socket.user?.role === 'asha' && userId === String(call.ashaId));
       if (!allowed) throw new Error('You are not a participant in this call');
 
       socket.join(roomId);
@@ -54,6 +58,50 @@ io.on('connection', (socket) => {
       console.log(`${socket.id} joined room ${roomId}`);
       socket.to(roomId).emit('peer-joined', { id: socket.id });
       if (typeof acknowledge === 'function') acknowledge({ success: true, roomId });
+    } catch (error) {
+      if (typeof acknowledge === 'function') acknowledge({ success: false, error: error.message });
+    }
+  });
+
+  socket.on('driver:join', (acknowledge) => {
+    if (socket.user?.role !== 'driver') {
+      if (typeof acknowledge === 'function') acknowledge({ success: false, error: 'Only drivers can join a driver dispatch room' });
+      return;
+    }
+    socket.join(`driver:${socket.user.id}`);
+    if (typeof acknowledge === 'function') acknowledge({ success: true });
+  });
+
+  // Lets a doctor's dashboard receive a live push the moment an ASHA worker
+  // starts a video consultation for one of her patients with them, instead of
+  // relying on the 15s dashboard poll to notice a new appointment appeared.
+  socket.on('doctor:join', (acknowledge) => {
+    if (socket.user?.role !== 'doctor') {
+      if (typeof acknowledge === 'function') acknowledge({ success: false, error: 'Only doctors can join a doctor notification room' });
+      return;
+    }
+    socket.join(`doctor:${socket.user.id}`);
+    if (typeof acknowledge === 'function') acknowledge({ success: true });
+  });
+
+  // Live GPS ping from a driver's phone while they're on an active job. We
+  // persist it on their Ambulance record (so REST reads stay current) and
+  // broadcast it so the patient/admin watching that ambulance can render a
+  // live-moving marker without polling.
+  socket.on('driver:location:update', async ({ latitude, longitude } = {}, acknowledge) => {
+    try {
+      if (socket.user?.role !== 'driver') throw new Error('Only drivers can report location');
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) throw new Error('latitude and longitude are required');
+
+      const ambulance = await Ambulance.findOneAndUpdate(
+        { driver: socket.user.id },
+        { $set: { 'currentLocation.latitude': latitude, 'currentLocation.longitude': longitude } },
+        { new: true },
+      );
+      if (!ambulance) throw new Error('No ambulance assigned to this driver');
+
+      io.emit('ambulance:location', { ambulanceId: ambulance._id, latitude, longitude, updatedAt: new Date() });
+      if (typeof acknowledge === 'function') acknowledge({ success: true });
     } catch (error) {
       if (typeof acknowledge === 'function') acknowledge({ success: false, error: error.message });
     }

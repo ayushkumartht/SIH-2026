@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { io } from "socket.io-client";
 
 const API = (import.meta.env.VITE_API_URL || "http://localhost:3000").replace(/\/$/, "");
 async function api(path, token, options = {}) {
@@ -37,6 +38,7 @@ export default function AdminDashboard({ session, onLogout }) {
   const isAdmin = session.user?.role === "admin";
   const [tab, setTab] = useState("overview");
   const [emergencies, setEmergencies] = useState([]);
+  const [transportRequests, setTransportRequests] = useState([]);
   const [ambulances, setAmbulances] = useState([]);
   const [staff, setStaff] = useState([]);
   const [medicines, setMedicines] = useState([]);
@@ -50,12 +52,14 @@ export default function AdminDashboard({ session, onLogout }) {
 
   async function loadAll() {
     try {
-      const [em, amb, meds] = await Promise.all([
+      const [em, transport, amb, meds] = await Promise.all([
         api("/api/emergencies", token),
+        api("/api/transport-requests", token),
         api("/api/ambulances", token),
         api("/api/medicines", token),
       ]);
       setEmergencies(em);
+      setTransportRequests(transport);
       setAmbulances(amb);
       setMedicines(meds);
       if (isAdmin) setStaff(await api("/api/staff", token));
@@ -73,7 +77,15 @@ export default function AdminDashboard({ session, onLogout }) {
   useEffect(() => {
     loadAll();
     const timer = setInterval(loadAll, 20000);
-    return () => clearInterval(timer);
+
+    const socket = io(API, { auth: { token }, transports: ["websocket", "polling"] });
+    const events = ["emergency:new", "emergency:status_changed", "emergency:escalated", "transport:new", "transport:status_changed", "transport:escalated"];
+    events.forEach((event) => socket.on(event, loadAll));
+
+    return () => {
+      clearInterval(timer);
+      socket.disconnect();
+    };
   }, []);
 
   async function assignVehicle(emergencyId, vehicleId, label) {
@@ -100,7 +112,17 @@ export default function AdminDashboard({ session, onLogout }) {
     }
   }
 
+  async function cancelTransport(id) {
+    try {
+      await api(`/api/transport-requests/${id}/cancel`, token, { method: "PUT" });
+      loadAll();
+    } catch (e) {
+      setMessage(e.message);
+    }
+  }
+
   const activeEmergencies = emergencies.filter((e) => !["closed", "cancelled"].includes(e.dispatchStatus));
+  const activeTransport = transportRequests.filter((r) => !["completed", "cancelled"].includes(r.status));
   const availableAmbulances = ambulances.filter((a) => a.status === "available");
 
   if (loading) return <div className="patient-loading">Loading admin console…</div>;
@@ -129,6 +151,7 @@ export default function AdminDashboard({ session, onLogout }) {
           {[
             ["overview", "Overview"],
             ["emergencies", `Emergencies (${activeEmergencies.length})`],
+            ["transport", `Transport requests (${activeTransport.length})`],
             ["ambulances", "Ambulance fleet"],
             ["pharmacy", "Pharmacy stock"],
             ...(isAdmin ? [["staff", "Staff"]] : []),
@@ -165,6 +188,22 @@ export default function AdminDashboard({ session, onLogout }) {
                 ))
               ) : (
                 <p className="empty">No emergencies raised yet.</p>
+              )}
+            </section>
+          )}
+
+          {tab === "transport" && (
+            <section className="asha-panel">
+              <div className="panel-title"><h2>Non-emergency transport requests</h2></div>
+              {transportRequests.length ? (
+                transportRequests
+                  .slice()
+                  .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+                  .map((r) => (
+                    <TransportRequestRow key={r._id} request={r} token={token} onCancel={cancelTransport} />
+                  ))
+              ) : (
+                <p className="empty">No transport requests yet.</p>
               )}
             </section>
           )}
@@ -279,9 +318,31 @@ export default function AdminDashboard({ session, onLogout }) {
   );
 }
 
+function DispatchLog({ log }) {
+  if (!log) return <p className="empty">Loading dispatch log…</p>;
+  if (!log.length) return <p className="empty">No dispatch attempts recorded yet.</p>;
+  return (
+    <div className="dispatch-log">
+      {log.map((entry) => (
+        <div className="dispatch-log-row" key={entry._id}>
+          <span className={`badge dispatch-log-badge-${entry.status}`}>{entry.status}</span>
+          <div>
+            <b>{entry.driver?.name || "Unknown driver"}</b>
+            <small>{entry.driver?.phone} · {entry.distanceKm != null ? `${entry.distanceKm} km` : ""} · via {entry.channel?.join("/")}</small>
+            {entry.respondedVia && <small>Responded via {entry.respondedVia}{entry.respondedAt ? ` at ${new Date(entry.respondedAt).toLocaleTimeString()}` : ""}</small>}
+          </div>
+          <small>{new Date(entry.calledAt || entry.createdAt).toLocaleTimeString()}</small>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function EmergencyDispatchRow({ emergency, token, onAssign, onAdvance }) {
   const [suggestions, setSuggestions] = useState(null);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [log, setLog] = useState(null);
+  const [showLog, setShowLog] = useState(false);
 
   async function findAmbulances() {
     setLoadingSuggestions(true);
@@ -291,6 +352,17 @@ function EmergencyDispatchRow({ emergency, token, onAssign, onAdvance }) {
       setSuggestions([]);
     }
     setLoadingSuggestions(false);
+  }
+
+  async function toggleLog() {
+    if (!showLog && !log) {
+      try {
+        setLog(await api(`/api/emergencies/${emergency._id}/dispatch-log`, token));
+      } catch {
+        setLog([]);
+      }
+    }
+    setShowLog((v) => !v);
   }
 
   const nextSteps = NEXT_STATUS[emergency.dispatchStatus] || [];
@@ -315,6 +387,19 @@ function EmergencyDispatchRow({ emergency, token, onAssign, onAdvance }) {
           {emergency.assignedVehicle.driver ? ` · ${emergency.assignedVehicle.driver.name} (${emergency.assignedVehicle.driver.phone})` : ""}
         </small>
       )}
+
+      {emergency.escalatedToControlRoom && !emergency.assignedVehicle && (
+        <div className="escalation-banner">
+          ⚠ No driver accepted automatically — this has escalated to the control room. Assign an ambulance manually below.
+        </div>
+      )}
+
+      <div className="asha-actions">
+        <button className="button button-ghost" onClick={toggleLog}>
+          {showLog ? "Hide dispatch log" : "View dispatch log"}
+        </button>
+      </div>
+      {showLog && <DispatchLog log={log} />}
 
       {["pending", "searching_ambulance"].includes(emergency.dispatchStatus) && (
         <div className="asha-actions">
@@ -350,6 +435,67 @@ function EmergencyDispatchRow({ emergency, token, onAssign, onAdvance }) {
           ))}
         </div>
       )}
+    </article>
+  );
+}
+
+const transportStatusLabel = {
+  requested: "Request received",
+  searching_driver: "Finding driver",
+  driver_assigned: "Driver assigned",
+  dispatched: "Dispatched",
+  en_route: "En route",
+  arrived: "Arrived",
+  completed: "Completed",
+  cancelled: "Cancelled",
+};
+
+function TransportRequestRow({ request, token, onCancel }) {
+  const [log, setLog] = useState(null);
+  const [showLog, setShowLog] = useState(false);
+
+  async function toggleLog() {
+    if (!showLog && !log) {
+      try {
+        setLog(await api(`/api/transport-requests/${request._id}/dispatch-log`, token));
+      } catch {
+        setLog([]);
+      }
+    }
+    setShowLog((v) => !v);
+  }
+
+  return (
+    <article className="asha-row" style={{ flexDirection: "column", alignItems: "stretch", gap: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", width: "100%" }}>
+        <div>
+          <b>{request.patient?.name || "Unknown patient"}</b>
+          <small>To {request.destinationHospital?.name || "Hospital"} · {new Date(request.createdAt).toLocaleString()}</small>
+          {request.notes && <small>{request.notes}</small>}
+        </div>
+        <span className="badge">{transportStatusLabel[request.status] || request.status}</span>
+      </div>
+
+      {request.assignedVehicle && (
+        <small>
+          Vehicle: {request.assignedVehicle.vehicleNumber}
+          {request.assignedVehicle.driver ? ` · ${request.assignedVehicle.driver.name} (${request.assignedVehicle.driver.phone})` : ""}
+        </small>
+      )}
+
+      {request.escalatedToControlRoom && !request.assignedVehicle && (
+        <div className="escalation-banner">⚠ No driver accepted automatically — needs manual follow-up.</div>
+      )}
+
+      <div className="asha-actions">
+        <button className="button button-ghost" onClick={toggleLog}>
+          {showLog ? "Hide dispatch log" : "View dispatch log"}
+        </button>
+        {!["completed", "cancelled"].includes(request.status) && (
+          <button className="button button-soft" onClick={() => onCancel(request._id)}>Cancel</button>
+        )}
+      </div>
+      {showLog && <DispatchLog log={log} />}
     </article>
   );
 }

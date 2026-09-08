@@ -16,6 +16,7 @@ A telemedicine and hospital-coordination platform built for **SIH 2026**, addres
 - Consent-gated, time-boxed (2-hour) live location sharing with the assigned doctor during a call.
 - Emergency SOS with geolocated ambulance dispatch tracking.
 - Medicine availability lookup across hospitals.
+- Book a ride: non-emergency transport request to a chosen hospital, dispatched by the same automated engine as SOS.
 - Rule-based symptom triage (transparent keyword screen — not a diagnosis).
 - Prescription history with PDF export.
 - Offline-tolerant dashboard: cached record snapshot + an offline action queue (e.g. bookings made without connectivity sync automatically once back online).
@@ -33,11 +34,23 @@ A telemedicine and hospital-coordination platform built for **SIH 2026**, addres
 - Consent-based field-visit location capture on a live map.
 - Explicitly cannot prescribe, diagnose, or see unrelated patients — matches real ASHA role boundaries.
 
+### Ambulance & cab dispatch (automated)
+- Raising an SOS or booking a ride triggers the dispatch engine automatically — no admin step required to get things moving.
+- It first looks for a nearby ambulance already marked available and auto-assigns it; if none is free, it cascades through registered drivers one at a time (in-app push + real Twilio voice call + SMS), each with a response timeout before moving to the next.
+- A driver accepts via the Driver Dashboard, by pressing a key on the phone call, or by replying YES/NO to the SMS — all three funnel into the same accept/decline logic.
+- On acceptance, the destination hospital is auto-matched by distance and capability (e.g. critical cases prefer a hospital with an ICU/trauma facility).
+- If every driver is exhausted with no acceptance, the case escalates to the admin console for manual assignment (the original console still works as a fallback) with a full call-by-call audit log.
+- Twilio is optional: without credentials configured, the whole flow still works end-to-end through the in-app accept/decline path — see `.env.example` for what's needed to enable real calls/SMS.
+
 ### Admin / Receptionist
-- Emergency dispatch console: nearest-ambulance suggestion (geodistance) and a validated dispatch state machine (pending → assigned → dispatched → en route → arrived → at hospital → handed over → closed).
-- Ambulance and driver fleet management.
+- Emergency dispatch console: live queue with the automated dispatch outcome, an expandable per-case audit log (who was called, when, how they responded), and a manual assign/status fallback for escalated cases.
+- Non-emergency transport request queue.
+- Ambulance and driver fleet management (drivers get their own login credentials).
 - Pharmacy stock management.
 - Staff account management (admin only).
+
+### Driver
+- Own login and a live dashboard: toggle available/off-duty, receive incoming dispatch offers in real time with a countdown to accept/decline, track the active job on a map, and advance its status through to handover/completion.
 
 ### Backend/platform
 - Node.js + Express + MongoDB (Mongoose), JWT auth with per-role authorization.
@@ -66,7 +79,9 @@ See [avika.md](avika.md) for a slide-ready summary.
    npm install
    npm run dev
    ```
-5. Open `http://localhost:5173`. Routes: `/patient`, `/doctor`, `/asha`, `/admin`, `/docs`.
+5. Open `http://localhost:5173`. Routes: `/patient`, `/doctor`, `/asha`, `/admin`, `/driver`, `/docs`.
+
+To enable real Twilio voice calls/SMS to drivers (optional — the dispatch engine works fully without it via in-app accept/decline), fill in `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`, and `PUBLIC_BASE_URL` in `.env`. For local dev, `PUBLIC_BASE_URL` needs a publicly reachable URL for Twilio's webhooks — run `ngrok http 3000` and paste the `https://*.ngrok-free.app` URL.
 
 `npm run seed` prints every seeded account. All seeded passwords are `demo123`:
 
@@ -78,6 +93,7 @@ See [avika.md](avika.md) for a slide-ready summary.
 | Lab | lab@demo.local |
 | ASHA | asha@demo.local |
 | Patient | patient@demo.local (+ 1 more) |
+| Driver | balwinder.driver@demo.local (+ 2 more) |
 
 ## Testing
 
@@ -97,5 +113,5 @@ Runs the Jest/Supertest suite against an isolated `nabhacare_test` MongoDB datab
 
 - The offline layer caches dashboard data and queues actions in IndexedDB; it is not a full installable PWA with app-shell precaching.
 - Multilingual support covers the patient-facing app (per the problem statement); staff-facing dashboards (Doctor/ASHA/Admin) are English-only.
-- The ambulance dispatch workflow is a request → match → assign → status-progression system; it does not integrate with physical vehicle GPS hardware.
+- The ambulance/cab dispatch workflow is a request → auto-match → cascade-call → assign → status-progression system; it does not integrate with physical vehicle GPS hardware, and the dispatch cascade's timers are in-memory (correct for this single-instance deployment, but would need a real job queue for a multi-instance production deployment).
 - Production hardening still needed before clinical deployment: HTTPS, encrypted backups, formal privacy/compliance review, TURN server for WebRTC across restrictive networks, and device testing on low-end rural hardware.

@@ -1,30 +1,10 @@
 import Emergency from '../models/Emergency.js';
 import Ambulance from '../models/Ambulance.js';
 import Doctor from '../models/doctor.js';
+import DispatchAttempt from '../models/DispatchAttempt.js';
 import { haversineKm } from '../utils/geo.js';
-
-const ALLOWED_TRANSITIONS = {
-  pending: ['searching_ambulance', 'vehicle_assigned', 'cancelled'],
-  searching_ambulance: ['vehicle_assigned', 'cancelled'],
-  vehicle_assigned: ['dispatched', 'cancelled'],
-  dispatched: ['en_route', 'cancelled'],
-  en_route: ['arrived', 'cancelled'],
-  arrived: ['at_hospital', 'cancelled'],
-  at_hospital: ['handed_over'],
-  handed_over: ['closed'],
-  cancelled: [],
-  closed: [],
-};
-
-const TIMESTAMP_FIELD = {
-  vehicle_assigned: 'vehicleAssignedAt',
-  dispatched: 'dispatchedAt',
-  en_route: 'enRouteAt',
-  arrived: 'arrivedAt',
-  at_hospital: 'atHospitalAt',
-  closed: 'closedAt',
-  cancelled: 'cancelledAt',
-};
+import { EMERGENCY_TRANSITIONS as ALLOWED_TRANSITIONS, EMERGENCY_TIMESTAMP_FIELD as TIMESTAMP_FIELD } from '../utils/dispatchStateMachine.js';
+import { startDispatch } from '../services/dispatchEngine.js';
 
 function emitEmergency(req, event, emergency) {
   const io = req.app.get('io');
@@ -83,8 +63,14 @@ export const createEmergency = async (req, res, next) => {
       title,
       details,
     });
-    emitEmergency(req, 'emergency:new', created);
     res.status(201).json({ success: true, data: created });
+
+    // Fire-and-forget: automatically look for a nearby ambulance, then cascade
+    // through registered drivers (call/SMS/app) if none is immediately available.
+    // Response has already been sent so this never delays the API caller.
+    startDispatch('emergency', created, req.app.get('io')).catch((e) =>
+      console.error('[emergencyController] startDispatch failed:', e),
+    );
   } catch (e) { next(e); }
 };
 
@@ -204,6 +190,16 @@ export const resolveEmergency = async (req, res, next) => {
     if (updated.assignedVehicle) await Ambulance.findByIdAndUpdate(updated.assignedVehicle, { status: 'available' });
     emitEmergency(req, 'emergency:status_changed', updated);
     res.json({ success: true, data: updated });
+  } catch (e) { next(e); }
+};
+
+export const getDispatchLog = async (req, res, next) => {
+  try {
+    const items = await DispatchAttempt.find({ requestType: 'emergency', requestId: req.params.id })
+      .populate('driver', 'name phone')
+      .populate('ambulance', 'vehicleNumber')
+      .sort({ createdAt: 1 });
+    res.json({ success: true, data: items });
   } catch (e) { next(e); }
 };
 

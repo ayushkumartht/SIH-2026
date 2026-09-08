@@ -5,6 +5,19 @@ const API = (import.meta.env.VITE_API_URL || "http://localhost:3000").replace(
   /\/$/,
   "",
 );
+
+// STUN alone can only traverse simple NATs — many real-world networks
+// (mobile data, campus/office firewalls) need a TURN relay to connect at
+// all. Optional: if VITE_TURN_URL is set, it's added alongside STUN.
+const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
+if (import.meta.env.VITE_TURN_URL) {
+  ICE_SERVERS.push({
+    urls: import.meta.env.VITE_TURN_URL,
+    username: import.meta.env.VITE_TURN_USERNAME,
+    credential: import.meta.env.VITE_TURN_CREDENTIAL,
+  });
+}
+
 async function request(path, token, options = {}) {
   const response = await fetch(`${API}${path}`, {
     ...options,
@@ -49,6 +62,7 @@ export default function LiveConsultation({
   const callRef = useRef(null);
   const pendingCandidates = useRef([]);
   const qualityTimer = useRef(null);
+  const connectTimeout = useRef(null);
   const [state, setState] = useState({
     loading: true,
     status: "Preparing your secure call…",
@@ -79,6 +93,7 @@ export default function LiveConsultation({
   useEffect(() => {
     let disposed = false;
     const stop = () => {
+      window.clearTimeout(connectTimeout.current);
       stream.current?.getTracks().forEach((track) => track.stop());
       peer.current?.close();
       socket.current?.disconnect();
@@ -86,27 +101,17 @@ export default function LiveConsultation({
 
     async function start() {
       try {
-        let sessionData;
-        try {
-          sessionData = await request(
-            "/api/portal/calls/session",
-            authToken,
-            {
-              method: "POST",
-              body: JSON.stringify({
-                appointmentId: apptId,
-              }),
-            },
-          );
-        } catch (e) {
-          // Fallback session object for local demo mode if endpoint fails
-          sessionData = {
-            callId: `call-${Date.now()}`,
-            roomId: roomId || `room-${apptId}`,
-            consentGranted: true,
-            networkTier: "hd",
-          };
-        }
+        const sessionPath = role === "asha" ? "/api/asha/calls/session" : "/api/portal/calls/session";
+        const sessionBody =
+          role === "asha"
+            ? apptObj._id
+              ? { appointmentId: apptObj._id }
+              : { patientId: apptObj.patientId, doctorId: apptObj.doctorId, reason: apptObj.reason }
+            : { appointmentId: apptId };
+        const sessionData = await request(sessionPath, authToken, {
+          method: "POST",
+          body: JSON.stringify(sessionBody),
+        });
 
         if (disposed) return;
         callRef.current = sessionData;
@@ -150,11 +155,13 @@ export default function LiveConsultation({
               status: "Camera unavailable — continuing with audio.",
             }));
           } catch {
-            // Media devices disabled/mock mode
+            // Camera/mic denied or unavailable — still join so we can at
+            // least receive the other participant's video/audio.
             setState((value) => ({
               ...value,
-              loading: false,
-              status: "Simulated call mode (Microphone/Camera permission needed for live stream)",
+              camera: false,
+              mic: false,
+              status: "Camera/microphone unavailable on this device — you can still see and hear the other participant.",
             }));
           }
         }
@@ -170,42 +177,67 @@ export default function LiveConsultation({
             localVideo.current.srcObject = media;
             localVideo.current.play().catch(() => {});
           }
+        }
 
-          const connection = new RTCPeerConnection({
-            iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-          });
-          peer.current = connection;
+        const connection = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+        peer.current = connection;
+
+        if (media) {
           media.getTracks().forEach((track) => connection.addTrack(track, media));
+        } else {
+          // No local camera/mic to send, but still negotiate to receive theirs.
+          connection.addTransceiver("video", { direction: "recvonly" });
+          connection.addTransceiver("audio", { direction: "recvonly" });
+        }
 
-          connection.ontrack = (event) => {
-            const remoteStream = event.streams[0];
-            if (remoteVideo.current) {
-              remoteVideo.current.srcObject = remoteStream;
-              remoteVideo.current.play().catch(() => {});
-            }
+        connection.ontrack = (event) => {
+          const remoteStream = event.streams[0];
+          if (remoteVideo.current) {
+            remoteVideo.current.srcObject = remoteStream;
+            remoteVideo.current.play().catch(() => {});
+          }
+          window.clearTimeout(connectTimeout.current);
+          setState((value) => ({
+            ...value,
+            remote: true,
+            error: "",
+            status: "Connected to consultation session",
+          }));
+        };
+
+        connection.onicecandidate = (event) => {
+          if (event.candidate)
+            socket.current?.emit("ice-candidate", {
+              roomId: sessionData.roomId,
+              candidate: event.candidate,
+            });
+        };
+
+        connection.onconnectionstatechange = () => {
+          if (connection.connectionState === "connected") {
+            window.clearTimeout(connectTimeout.current);
+          } else if (connection.connectionState === "failed") {
             setState((value) => ({
               ...value,
-              remote: true,
-              status: "Connected to consultation session",
+              error: "Connection interrupted. Use Reconnect to try again.",
             }));
-          };
+          }
+        };
 
-          connection.onicecandidate = (event) => {
-            if (event.candidate)
-              socket.current?.emit("ice-candidate", {
-                roomId: sessionData.roomId,
-                candidate: event.candidate,
-              });
-          };
-
-          connection.onconnectionstatechange = () => {
-            if (connection.connectionState === "failed")
-              setState((value) => ({
-                ...value,
-                error: "Connection interrupted. Use Reconnect to try again.",
-              }));
-          };
-        }
+        // Signaling (offer/answer/ICE) can complete successfully while the
+        // actual peer-to-peer connection never forms — typically when the two
+        // devices are on different networks/behind a firewall with no relay
+        // (TURN) server configured. That leaves a blank video with no visible
+        // error, so watch for it explicitly instead of waiting forever.
+        connectTimeout.current = window.setTimeout(() => {
+          if (connection.connectionState !== "connected") {
+            setState((value) => ({
+              ...value,
+              error:
+                "Could not establish a direct video connection with the other participant. This usually happens when the two devices are on different networks or behind a firewall. Try connecting both devices to the same Wi-Fi, or use Reconnect to try again.",
+            }));
+          }
+        }, 15000);
 
         const liveSocket = io(API, {
           auth: { token: authToken },
@@ -213,11 +245,11 @@ export default function LiveConsultation({
         });
         socket.current = liveSocket;
 
-        liveSocket.on("connect_error", () =>
+        liveSocket.on("connect_error", (err) =>
           setState((value) => ({
             ...value,
             loading: false,
-            status: "Connected in offline simulation mode",
+            error: `Could not connect to the call server: ${err.message || "connection failed"}. Use Reconnect to try again.`,
           })),
         );
 
@@ -253,9 +285,9 @@ export default function LiveConsultation({
           } catch {
             setState((value) => ({
               ...value,
-              quality: "hd",
-              rttMs: 45,
-              packetLossPercent: 0,
+              quality: "unknown",
+              rttMs: null,
+              packetLossPercent: null,
             }));
           }
         };
@@ -366,7 +398,7 @@ export default function LiveConsultation({
             oxygenSaturationPercent: Number(
               form.get("oxygenSaturationPercent"),
             ),
-            source: role === "doctor" ? "doctor" : "patient",
+            source: role === "doctor" ? "doctor" : role === "asha" ? "asha" : "patient",
           }),
         },
       ).catch(() => {});
@@ -427,8 +459,10 @@ export default function LiveConsultation({
           <h2>
             {apptObj.doctor?.name ||
               care?.patient?.name ||
-              (role === "doctor" ? "Patient consultation" : "Your doctor")}
+              callRef.current?.patient?.name ||
+              (role === "doctor" ? "Patient consultation" : role === "asha" ? "Patient consultation" : "Your doctor")}
           </h2>
+          {role === "asha" && <p className="muted">You're joining on behalf of the patient.</p>}
           <p>{qualityText[state.quality] || qualityText.unknown}</p>
         </div>
         <button

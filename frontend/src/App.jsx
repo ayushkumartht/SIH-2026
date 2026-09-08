@@ -4,6 +4,7 @@ import LiveConsultation from "./LiveConsultation";
 import DoctorDashboard from "./DoctorDashboard";
 import AshaDashboard from "./AshaDashboard";
 import AdminDashboard from "./AdminDashboard";
+import DriverDashboard from "./DriverDashboard";
 
 const API = (import.meta.env.VITE_API_URL || "http://localhost:3000").replace(
   /\/$/,
@@ -395,6 +396,9 @@ function Home() {
           <Link href="/asha" className="button button-soft">
             I am an ASHA worker
           </Link>
+          <Link href="/driver" className="button button-soft">
+            I am an ambulance/cab driver
+          </Link>
         </div>
       </section>
     </Shell>
@@ -565,6 +569,21 @@ function Admin() {
         allowedRoles={["admin", "receptionist"]}
         title="Admin / Receptionist console"
         onLogin={(data) => { sessionStorage.setItem("admin-session", JSON.stringify(data)); setSession(data); }}
+      />
+    </Shell>
+  );
+}
+function Driver() {
+  const [session, setSession] = useState(() => JSON.parse(sessionStorage.getItem("driver-session") || "null"));
+  return session ? (
+    <DriverDashboard session={session} onLogout={() => { sessionStorage.removeItem("driver-session"); setSession(null); }} />
+  ) : (
+    <Shell>
+      <Auth
+        role="driver"
+        allowedRoles={["driver"]}
+        title="Ambulance driver login"
+        onLogin={(data) => { sessionStorage.setItem("driver-session", JSON.stringify(data)); setSession(data); }}
       />
     </Shell>
   );
@@ -1053,6 +1072,7 @@ function App() {
   if (path === "/asha" || path.endsWith("/asha.html")) return <Asha />;
   if (path === "/doctor" || path.endsWith("/doctor.html")) return <Doctor />;
   if (path === "/admin" || path.endsWith("/admin.html")) return <Admin />;
+  if (path === "/driver" || path.endsWith("/driver.html")) return <Driver />;
   if (path === "/docs" || path.endsWith("/docs.html")) return <Docs />;
   return <Home />;
 }

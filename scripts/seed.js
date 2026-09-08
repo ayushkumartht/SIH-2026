@@ -44,46 +44,72 @@ async function seed() {
     ]);
     console.log("Cleared existing collections.");
 
-    // --- Hospitals ---
+    // --- Hospitals (real facilities, real coordinates) ---
     const hospitals = await Hospital.create([
       {
         name: "Civil Hospital Nabha",
-        address: "Hospital Road, Nabha",
+        address: "Guru Nanak Pura Mohalla, Near Bus Stand",
         city: "Nabha",
         state: "Punjab",
         pincode: "147201",
         contact: "+91 1765 220123",
         type: "district",
-        latitude: 30.3753,
-        longitude: 76.1500,
+        latitude: 30.3725,
+        longitude: 76.1460,
         beds: 42,
         facilities: ["Emergency 24/7", "ICU", "Teleconsultation Hub", "Maternity"],
       },
       {
         name: "Community Health Centre Bhadson",
-        address: "Bhadson Road, Near Bus Stand",
+        address: "Patiala Road, Bhadson",
         city: "Bhadson",
         state: "Punjab",
         pincode: "147202",
         contact: "+91 1765 240456",
         type: "chc",
-        latitude: 30.4120,
-        longitude: 76.1850,
+        latitude: 30.5150,
+        longitude: 76.2463,
         beds: 18,
         facilities: ["General Medicine", "Pediatrics", "ASHA Desk"],
       },
       {
-        name: "Sub-Divisional Hospital Rajpura",
+        name: "Civil Hospital Rajpura",
         address: "GT Road, Rajpura",
         city: "Rajpura",
         state: "Punjab",
         pincode: "140401",
         contact: "+91 1762 225678",
         type: "sub-district",
-        latitude: 30.4840,
-        longitude: 76.5940,
+        latitude: 30.4784,
+        longitude: 76.5841,
         beds: 60,
         facilities: ["Trauma Care", "Dialysis", "Radiology", "Tele-ICU"],
+      },
+      {
+        name: "Shreya Hospital",
+        address: "Cinema Road, Bouran Gate",
+        city: "Nabha",
+        state: "Punjab",
+        pincode: "147201",
+        contact: "+91 1765 650141",
+        type: "private",
+        latitude: 30.3721,
+        longitude: 76.1401,
+        beds: 30,
+        facilities: ["Multi-Specialty", "24x7 Emergency", "Pharmacy"],
+      },
+      {
+        name: "Raj General Hospital",
+        address: "Nabha Road, Duladi",
+        city: "Nabha",
+        state: "Punjab",
+        pincode: "147201",
+        contact: "+91 1765 500221",
+        type: "private",
+        latitude: 30.3706,
+        longitude: 76.1420,
+        beds: 20,
+        facilities: ["General Medicine", "Minor Surgery"],
       },
     ]);
 
@@ -195,8 +221,9 @@ async function seed() {
 
     // --- Ambulances + drivers ---
     const drivers = await Driver.create([
-      { name: "Balwinder Singh", phone: "9855511111", licenseNo: "PB-DL-001" },
-      { name: "Manpreet Kaur", phone: "9855522222", licenseNo: "PB-DL-002" },
+      { name: "Balwinder Singh", phone: "9855511111", licenseNo: "PB-DL-001", email: "balwinder.driver@demo.local", password: await hash(PASSWORD) },
+      { name: "Manpreet Kaur", phone: "9855522222", licenseNo: "PB-DL-002", email: "manpreet.driver@demo.local", password: await hash(PASSWORD) },
+      { name: "Gurmeet Singh", phone: "9855533333", licenseNo: "PB-DL-003", email: "gurmeet.driver@demo.local", password: await hash(PASSWORD) },
     ]);
     await Ambulance.create([
       {
@@ -215,6 +242,15 @@ async function seed() {
         driver: drivers[1]._id,
         capacity: 1,
         currentLocation: { latitude: 30.4110, longitude: 76.1840 },
+        status: "available",
+      },
+      {
+        vehicleNumber: "PB-11-EF-9012",
+        type: "patient_transport",
+        hospitalId: hospitals[0]._id,
+        driver: drivers[2]._id,
+        capacity: 3,
+        currentLocation: { latitude: 30.3730, longitude: 76.1470 },
         status: "available",
       },
     ]);
@@ -293,13 +329,16 @@ async function seed() {
       { role: "asha", email: asha.email, password: PASSWORD },
       { role: "patient", email: patients[0].email, password: PASSWORD },
       { role: "patient", email: patients[1].email, password: PASSWORD },
+      { role: "driver", email: drivers[0].email, password: PASSWORD },
+      { role: "driver", email: drivers[1].email, password: PASSWORD },
+      { role: "driver", email: drivers[2].email, password: PASSWORD },
     );
 
     console.log("\nSeed complete. Seeded test accounts:\n");
     for (const c of credentials) {
       console.log(`  ${c.role.padEnd(12)} ${c.email.padEnd(28)} ${c.password}`);
     }
-    console.log(`\n  ${hospitals.length} hospitals, ${doctors.length} doctors, ${patients.length} patients, 2 ambulances, 5 medicine stock records, 1 appointment, 1 consultation, 1 emergency.\n`);
+    console.log(`\n  ${hospitals.length} hospitals (real Nabha-area facilities), ${doctors.length} doctors, ${patients.length} patients, ${drivers.length} drivers/ambulances, 5 medicine stock records, 1 appointment, 1 consultation, 1 emergency.\n`);
 
     process.exit(0);
   } catch (err) {
